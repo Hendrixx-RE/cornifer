@@ -1,0 +1,27 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: cornifer-postgres
+    restart: unless-stopped
+    labels:
+      # Set when running under an AO worker session so the session can find
+      # and clean up this container; harmless (empty) otherwise.
+      ao.session: "${AO_SESSION_ID:-}"
+    environment:
+      POSTGRES_USER: cornifer
+      POSTGRES_PASSWORD: cornifer
+      POSTGRES_DB: cornifer
+    ports:
+      # Host 5433 to avoid colliding with a Postgres already running on the
+      # default 5432. Matches the default in cmd/migrate and CORNIFER_DATABASE_URL.
+      - "5433:5432"
+    volumes:
+      - cornifer-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cornifer -d cornifer"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  cornifer-pgdata:
