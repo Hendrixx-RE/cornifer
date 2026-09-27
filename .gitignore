@@ -1,0 +1,14 @@
+# Cloned target repo (see scripts/fetch-target-repo.sh, TARGET_REPO)
+/repos/
+
+# Build artifacts
+/bin/
+*.exe
+
+# Go
+*.test
+*.out
+
+# Editors / OS
+.DS_Store
+*.swp
