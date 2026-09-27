@@ -1,0 +1,12 @@
+[1] module "m" parent=- lines=1-24
+[2] function "m.simple_decorator" parent=1 lines=1-2
+    sig: def simple_decorator(f):
+[3] function "m.parametrized" parent=1 lines=5-8
+    sig: def parametrized(arg):
+[4] function "m.decorated_function" parent=1 lines=11-15
+    sig: @simple_decorator\n@parametrized("x")\ndef decorated_function():
+    doc: Decorated function doc.
+[5] class "m.Widget" parent=1 lines=18-23
+    sig: class Widget:
+[6] method "m.Widget.stacked_method" parent=5 lines=19-23
+    sig: @simple_decorator\n    @parametrized("y")\n    @parametrized("z")\n    def stacked_method(self):

@@ -1,0 +1,7 @@
+[1] module "m" parent=- lines=1-7
+[2] class "m.Settings" parent=1 lines=1-6
+    sig: class Settings:
+    doc: Settings doc.
+[3] variable "m.Settings.DEBUG" parent=2 lines=4-4
+[4] variable "m.Settings.TIMEOUT" parent=2 lines=5-5
+[5] variable "m.Settings.handler" parent=2 lines=6-6

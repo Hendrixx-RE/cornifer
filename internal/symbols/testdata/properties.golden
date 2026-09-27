@@ -1,0 +1,10 @@
+[1] module "m" parent=- lines=1-13
+[2] class "m.Circle" parent=1 lines=1-12
+    sig: class Circle:
+[3] method "m.Circle.__init__" parent=2 lines=2-3
+    sig: def __init__(self, radius):
+[4] method "m.Circle.area" parent=2 lines=5-8
+    sig: @property\n    def area(self):
+    doc: Area doc.
+[5] method "m.Circle.area" parent=2 lines=10-12
+    sig: @area.setter\n    def area(self, value):

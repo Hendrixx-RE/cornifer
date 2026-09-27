@@ -1,0 +1,8 @@
+[1] module "m" parent=- lines=1-19
+[2] function "m.long_signature" parent=1 lines=1-9
+    sig: def long_signature(\n    a,\n    b=1,\n    *args,\n    c: int = 2,\n    **kwargs,\n) -> None:
+    doc: Long signature doc.
+[3] class "m.Config" parent=1 lines=12-18
+    sig: class Config:
+[4] method "m.Config.__init__" parent=3 lines=13-18
+    sig: def __init__(\n        self,\n        name: str,\n        value: int = 0,\n    ):

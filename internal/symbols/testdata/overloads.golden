@@ -1,0 +1,8 @@
+[1] module "m" parent=- lines=1-11
+[2] function "m.f" parent=1 lines=4-5
+    sig: @overload\ndef f(a: int) -> int:
+[3] function "m.f" parent=1 lines=6-7
+    sig: @overload\ndef f(a: str) -> str:
+[4] function "m.f" parent=1 lines=8-10
+    sig: def f(a):
+    doc: Implementation.
