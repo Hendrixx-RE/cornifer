@@ -20,21 +20,3 @@ type SparseIndex interface {
 	Index(ctx context.Context, chunks []*model.Chunk) error
 	Search(ctx context.Context, query string, limit int) ([]Result, error)
 }
-
-// unimplemented is the Phase 0 stub SparseIndex. Later waves replace it
-// with an in-process BM25 index or a Postgres-FTS-backed implementation.
-type unimplemented struct{}
-
-// New returns the Phase 0 stub SparseIndex, which always returns
-// model.ErrNotImplemented.
-func New() SparseIndex {
-	return unimplemented{}
-}
-
-func (unimplemented) Index(ctx context.Context, chunks []*model.Chunk) error {
-	return model.ErrNotImplemented
-}
-
-func (unimplemented) Search(ctx context.Context, query string, limit int) ([]Result, error) {
-	return nil, model.ErrNotImplemented
-}
