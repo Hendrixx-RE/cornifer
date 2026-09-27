@@ -1,0 +1,5 @@
+[1] module "m" parent=- lines=1-6
+[2] variable "m.add_one" parent=1 lines=1-1
+[3] class "m.Ops" parent=1 lines=4-5
+    sig: class Ops:
+[4] variable "m.Ops.double" parent=3 lines=5-5

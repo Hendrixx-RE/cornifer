@@ -1,0 +1,10 @@
+[1] module "m" parent=- lines=1-13
+[2] function "m.fetch" parent=1 lines=1-3
+    sig: async def fetch(url):
+    doc: Fetch doc.
+[3] class "m.Service" parent=1 lines=6-12
+    sig: class Service:
+[4] method "m.Service.get" parent=3 lines=7-8
+    sig: async def get(self, id):
+[5] method "m.Service.create" parent=3 lines=10-12
+    sig: @staticmethod\n    async def create():

@@ -1,0 +1,11 @@
+[1] module "m" parent=- lines=1-12
+[2] class "m.Outer" parent=1 lines=1-11
+    sig: class Outer:
+    doc: Outer class.
+[3] class "m.Outer.Inner" parent=2 lines=4-8
+    sig: class Inner:
+    doc: Inner class.
+[4] class "m.Outer.Inner.Innermost" parent=3 lines=7-8
+    sig: class Innermost:
+[5] method "m.Outer.method" parent=2 lines=10-11
+    sig: def method(self):
