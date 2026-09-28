@@ -11,9 +11,11 @@ import (
 
 // Extract walks res's syntax tree and returns every model.Symbol found in
 // the file: exactly one SymbolKindModule symbol for the file itself, plus a
-// symbol for every class, function, method, and module/class-level variable
-// found by walking the module body and each class body (see doc.go for the
-// full scoping contract). fileID is copied onto every returned Symbol's
+// symbol for every class, function, method, module/class-level variable, and
+// nested function/class definition found by walking the module body and
+// recursively descending into every class and function body (see doc.go for
+// the full scoping contract, including how nested defs' QualifiedNames are
+// formed). fileID is copied onto every returned Symbol's
 // FileID field as-is — Extract does not require it to be a real,
 // store-assigned ID, so callers still deciding on a File's ID may pass 0.
 // moduleName becomes both the Name and QualifiedName of the module symbol
@@ -54,13 +56,18 @@ type scopeKind int
 const (
 	scopeModule scopeKind = iota
 	scopeClass
+	scopeFunction
 )
 
 // scope tracks the lexical context Extract is currently walking: whether
 // nested function definitions become SymbolKindFunction or
-// SymbolKindMethod, the dotted qualified-name prefix new symbols are
-// appended to, and the temporary ID new symbols should record as their
-// ParentID (see doc.go for what "temporary ID" means here).
+// SymbolKindMethod (only a def directly inside scopeClass becomes a
+// method — a def inside scopeFunction is always a SymbolKindFunction, even
+// if that function is itself a method's body), the dotted qualified-name
+// prefix new symbols are appended to (see joinQualifiedName and doc.go for
+// how scopeFunction bodies extend this with a "<locals>" segment), and the
+// temporary ID new symbols should record as their ParentID (see doc.go for
+// what "temporary ID" means here).
 type scope struct {
 	kind          scopeKind
 	qualifiedName string
@@ -146,9 +153,13 @@ func (e *extractor) walkCompound(n *sitter.Node, sc *scope) {
 // model.Symbol's documented contract, a decorated definition's span and
 // signature both start at the first decorator, not at "def".
 //
-// Function and method bodies are never walked for nested Symbols: a def or
-// class written inside a function body is out of scope for this package
-// (see doc.go).
+// The function's own body is then walked for nested class and function
+// definitions (see doc.go for the "<locals>" QualifiedName scheme this
+// introduces), so closures, decorator factories, and conditionally-defined
+// inner functions are extracted too. Bare-name assignments inside a function
+// body are still not extracted as SymbolKindVariable (see
+// handleExpressionStatement): only module- and class-level assignments are
+// symbols.
 func (e *extractor) handleFunction(def, decorated *sitter.Node, sc *scope) {
 	nameNode := def.ChildByFieldName("name")
 	body := def.ChildByFieldName("body")
@@ -168,12 +179,14 @@ func (e *extractor) handleFunction(def, decorated *sitter.Node, sc *scope) {
 	}
 
 	parentID := sc.parentID
+	qn := joinQualifiedName(sc.qualifiedName, name)
+	id := e.allocID()
 	sym := &model.Symbol{
-		ID:            e.allocID(),
+		ID:            id,
 		FileID:        e.fileID,
 		Kind:          kind,
 		Name:          name,
-		QualifiedName: joinQualifiedName(sc.qualifiedName, name),
+		QualifiedName: qn,
 		ParentID:      &parentID,
 		StartLine:     int(spanNode.StartPoint().Row) + 1,
 		EndLine:       int(spanNode.EndPoint().Row) + 1,
@@ -181,6 +194,8 @@ func (e *extractor) handleFunction(def, decorated *sitter.Node, sc *scope) {
 		Docstring:     extractDocstring(body, e.src),
 	}
 	e.out = append(e.out, sym)
+
+	e.walkBlock(body, &scope{kind: scopeFunction, qualifiedName: qn + ".<locals>", parentID: id})
 }
 
 // handleClass records def (a "class_definition" node) as a SymbolKindClass
@@ -224,8 +239,14 @@ func (e *extractor) handleClass(def, decorated *sitter.Node, sc *scope) {
 // bare name (e.g. "X = 1", "X: int = 1", or "f = lambda: None") as a
 // SymbolKindVariable symbol. Anything else an expression statement could be
 // — a bare call, a tuple/attribute/subscript assignment target, an
-// augmented assignment, ... — is not a symbol and is skipped.
+// augmented assignment, ... — is not a symbol and is skipped. sc.kind ==
+// scopeFunction is also skipped entirely: a local variable inside a
+// function body (including one that happens to be bound to a lambda) is
+// never a symbol, only module- and class-level assignments are.
 func (e *extractor) handleExpressionStatement(n *sitter.Node, sc *scope) {
+	if sc.kind == scopeFunction {
+		return
+	}
 	if n.NamedChildCount() == 0 {
 		return
 	}

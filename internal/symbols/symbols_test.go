@@ -27,6 +27,7 @@ var goldenCases = []string{
 	"class_attributes",
 	"properties",
 	"overloads",
+	"nested_defs",
 }
 
 func TestGolden(t *testing.T) {
@@ -98,4 +99,47 @@ func formatSymbols(syms []*model.Symbol) string {
 // multi-line signatures/docstrings.
 func indentContinuation(s string) string {
 	return strings.ReplaceAll(s, "\n", "\\n")
+}
+
+// TestNestedQualifiedNames asserts the documented "<locals>" scheme (doc.go)
+// independently of the golden file: names, kinds, and ParentID nesting.
+func TestNestedQualifiedNames(t *testing.T) {
+	src := []byte("def a():\n    def b():\n        def c(): pass\n    class D:\n        def e(self): pass\n    x = 1\n")
+	res, err := parse.New().Parse(context.Background(), "m.py", src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Tree.Close()
+
+	byQN := map[string]*model.Symbol{}
+	for _, s := range Extract(res, 1, "m") {
+		byQN[s.QualifiedName] = s
+	}
+	cases := []struct {
+		qn     string
+		kind   model.SymbolKind
+		parent string
+	}{
+		{"m.a", model.SymbolKindFunction, "m"},
+		{"m.a.<locals>.b", model.SymbolKindFunction, "m.a"},
+		{"m.a.<locals>.b.<locals>.c", model.SymbolKindFunction, "m.a.<locals>.b"},
+		{"m.a.<locals>.D", model.SymbolKindClass, "m.a"},
+		{"m.a.<locals>.D.e", model.SymbolKindMethod, "m.a.<locals>.D"},
+	}
+	for _, c := range cases {
+		s := byQN[c.qn]
+		if s == nil {
+			t.Errorf("missing symbol %q", c.qn)
+			continue
+		}
+		if s.Kind != c.kind {
+			t.Errorf("%s kind = %s, want %s", c.qn, s.Kind, c.kind)
+		}
+		if s.ParentID == nil || *s.ParentID != byQN[c.parent].ID {
+			t.Errorf("%s ParentID = %v, want ID of %s", c.qn, s.ParentID, c.parent)
+		}
+	}
+	if _, ok := byQN["m.a.<locals>.x"]; ok {
+		t.Error("local variable x must not be a symbol")
+	}
 }

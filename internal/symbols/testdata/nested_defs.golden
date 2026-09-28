@@ -1,0 +1,38 @@
+[1] module "m" parent=- lines=1-72
+    doc: Nested defs inside function bodies.
+[2] function "m.outer" parent=1 lines=4-23
+    sig: def outer(x):
+    doc: Outer doc.
+[3] function "m.outer.<locals>.inner" parent=2 lines=8-12
+    sig: def inner(y):
+[4] function "m.outer.<locals>.inner.<locals>.deep" parent=3 lines=9-10
+    sig: def deep(z):
+[5] class "m.outer.<locals>.Local" parent=2 lines=14-21
+    sig: class Local:
+[6] variable "m.outer.<locals>.Local.attr" parent=5 lines=15-15
+[7] method "m.outer.<locals>.Local.meth" parent=5 lines=17-21
+    sig: def meth(self):
+[8] function "m.outer.<locals>.Local.meth.<locals>.in_method" parent=7 lines=18-19
+    sig: def in_method():
+[9] class "m.K" parent=1 lines=26-31
+    sig: class K:
+[10] method "m.K.method" parent=9 lines=27-31
+    sig: def method(self):
+[11] function "m.K.method.<locals>.helper" parent=10 lines=28-29
+    sig: def helper():
+[12] function "m.conditional" parent=1 lines=34-60
+    sig: def conditional(flag):
+[13] function "m.conditional.<locals>.variant" parent=12 lines=37-38
+    sig: def variant():
+[14] function "m.conditional.<locals>.variant" parent=12 lines=42-43
+    sig: def variant():
+[15] function "m.conditional.<locals>.in_loop" parent=12 lines=47-48
+    sig: def in_loop():
+[16] function "m.conditional.<locals>.in_try" parent=12 lines=52-53
+    sig: def in_try():
+[17] function "m.decorator_factory" parent=1 lines=63-71
+    sig: def decorator_factory(times):
+[18] function "m.decorator_factory.<locals>.decorator" parent=17 lines=64-69
+    sig: def decorator(fn):
+[19] function "m.decorator_factory.<locals>.decorator.<locals>.wrapper" parent=18 lines=65-67
+    sig: @wraps(fn)\n        async def wrapper(*a, **kw):

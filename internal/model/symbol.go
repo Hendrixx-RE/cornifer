@@ -45,15 +45,27 @@ type Symbol struct {
 	Name string
 
 	// QualifiedName is the dotted path from the module root to this symbol,
-	// e.g. "fastapi.routing.APIRoute.get". It is unique within a Repo and is
-	// the primary lookup key for find_definition-style queries (see the
-	// btree index on symbols(qualified_name)).
+	// e.g. "fastapi.routing.APIRoute.get". A def or class nested in a
+	// function body follows CPython's __qualname__ form, with a "<locals>"
+	// segment after the enclosing function, e.g. "m.outer.<locals>.inner"
+	// (see internal/symbols doc.go).
+	//
+	// QualifiedName is NOT unique, within a Repo or even within a File:
+	// @typing.overload stubs and their implementation, conditional
+	// redefinitions (if/else, try/except ImportError), and same-named
+	// nested defs all produce several Symbols with one QualifiedName. The
+	// database agrees: symbols(qualified_name) has a plain btree index, not a
+	// UNIQUE constraint. It is the primary lookup key for find_definition-
+	// style queries, but consumers MUST handle multiple symbols sharing a
+	// qualified name (disambiguate, or return all candidates) and must not
+	// treat it as an identity key; use ID for that.
 	QualifiedName string
 
 	// ParentID is the enclosing Symbol: the class Symbol for a method, the
-	// module Symbol for a top-level class/function/variable, or the class
-	// Symbol for a nested class. Nil for module symbols, which have no
-	// enclosing scope.
+	// module Symbol for a top-level class/function/variable, the class
+	// Symbol for a nested class, or the enclosing function/method Symbol for
+	// a def or class nested inside a function body. Nil for module symbols,
+	// which have no enclosing scope.
 	ParentID *int64
 
 	// StartLine and EndLine are 1-indexed and inclusive, spanning from the
