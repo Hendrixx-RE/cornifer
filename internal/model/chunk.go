@@ -34,6 +34,11 @@ type Chunk struct {
 	SymbolID *int64
 	FileID   int64
 
+	// StartLine and EndLine are the 1-indexed, inclusive source lines Text
+	// was sliced from (additive; not yet persisted by internal/store).
+	StartLine int
+	EndLine   int
+
 	// Text is the raw chunk source text, exactly as it appears in the file
 	// (no context header prepended).
 	Text string
