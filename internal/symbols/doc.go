@@ -9,18 +9,45 @@
 // # Scope
 //
 // Extract produces exactly one SymbolKindModule symbol per file, plus one
-// symbol for every class, function/method, and bare-name assignment found
-// while walking the module body and, recursively, every class body nested
-// inside it (including through if/for/while/with/try wrappers, so
-// conditionally-defined top-level symbols — e.g. a class guarded by `if
-// TYPE_CHECKING:` — are still found). Function and method bodies are never
-// walked: a def or class written inside another function's body is not
-// extracted, matching the plan's "module/class-level" scope. Multiple
-// symbols may share a QualifiedName (e.g. @typing.overload stubs followed by
-// their implementation, or any other redefinition of the same name) —
-// Extract does not deduplicate; find_definition-style lookups need to
-// account for that (see Store.FindSymbolsByName, which already returns a
-// slice for this reason).
+// symbol for every class and function/method found while walking the module
+// body and, recursively, every class body and function body nested inside
+// it (including through if/for/while/with/try/match wrappers, so
+// conditionally-defined symbols — e.g. a class guarded by `if
+// TYPE_CHECKING:` or an inner def in an if/else branch — are still found).
+// Bare-name assignments (SymbolKindVariable) are extracted only at module
+// and class level; local variables inside function bodies are never symbols.
+// Python does not allow a def or class statement inside a comprehension or
+// lambda, so those need no handling.
+//
+// # Nested definitions and QualifiedName
+//
+// A def or class nested inside a function body gets a QualifiedName formed
+// exactly like CPython's __qualname__ (PEP 3155): the enclosing function's
+// QualifiedName, then the literal segment "<locals>", then the nested name.
+// A class body does NOT add a "<locals>" segment. Examples, for module "m":
+//
+//	def outer():            m.outer
+//	    def inner():        m.outer.<locals>.inner
+//	        def deep():     m.outer.<locals>.inner.<locals>.deep
+//	    class C:            m.outer.<locals>.C
+//	        def meth(self): m.outer.<locals>.C.meth   (SymbolKindMethod)
+//	class K:                m.K
+//	    def method(self):   m.K.method
+//	        def helper():   m.K.method.<locals>.helper (SymbolKindFunction)
+//
+// "<locals>" contains characters that cannot occur in a Python identifier, so
+// a nested name can never collide with a real attribute path, and consumers
+// can detect a function-local symbol by looking for the ".<locals>." segment.
+// A def directly in a class body is a SymbolKindMethod; a def inside any
+// function body (method or not) is always a SymbolKindFunction. ParentID is
+// the enclosing function or class symbol. The qualified name is purely
+// lexical: a def inside a loop, or defined in both branches of an if/else,
+// produces one symbol per occurrence in source, all sharing one QualifiedName.
+//
+// Multiple symbols may share a QualifiedName (e.g. @typing.overload stubs
+// followed by their implementation, or conditional redefinitions) — Extract
+// does not deduplicate; find_definition-style lookups need to account for
+// that (see Store.FindSymbolsByName, which returns a slice for this reason).
 //
 // # Parent links before persistence
 //

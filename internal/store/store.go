@@ -56,6 +56,15 @@ type Store interface {
 	// of re-inserting freshly parsed ones during incremental reindex.
 	DeleteSymbolsForFile(ctx context.Context, fileID int64) error
 	// FindSymbolByQualifiedName is the exact-match half of find_definition.
+	//
+	// AMBIGUITY WARNING: qualified names are not unique (overload stubs,
+	// conditional redefinitions, and same-named nested defs share one), yet
+	// this returns a single Symbol. When several match, it silently returns
+	// only one: deterministically the lowest (file_id, start_line, id), i.e.
+	// the first definition in the earliest-inserted file. That is typically
+	// an @overload stub, not the implementation. Callers that need to know
+	// whether the name is ambiguous, or need every candidate, must not rely on
+	// this method; use FindSymbolsByName and filter on QualifiedName.
 	FindSymbolByQualifiedName(ctx context.Context, repoID int64, qualifiedName string) (*model.Symbol, error)
 	// FindSymbolsByName is the fuzzier half of find_definition: every
 	// Symbol named exactly name, for disambiguation when multiple

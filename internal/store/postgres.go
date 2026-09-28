@@ -311,6 +311,7 @@ func (s *pgStore) FindSymbolByQualifiedName(ctx context.Context, repoID int64, q
 		 FROM symbols s
 		 JOIN files f ON f.id = s.file_id
 		 WHERE f.repo_id = $1 AND s.qualified_name = $2
+		 ORDER BY s.file_id, s.start_line, s.id
 		 LIMIT 1`,
 		repoID, qualifiedName,
 	).Scan(&sym.ID, &sym.FileID, &sym.Kind, &sym.Name, &sym.QualifiedName, &sym.ParentID, &sym.StartLine, &sym.EndLine, &sym.Signature, &sym.Docstring)
