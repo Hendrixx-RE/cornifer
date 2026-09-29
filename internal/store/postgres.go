@@ -254,9 +254,66 @@ func (s *pgStore) ListFiles(ctx context.Context, repoID int64) ([]*model.File, e
 	return files, nil
 }
 
+// GetFiles queries with `id = ANY($1)`, one round trip regardless of len(ids).
+// The result map is keyed by File.ID; requesting an ID that isn't in the
+// database (or passing an empty/nil ids) simply omits it, matching
+// internal/mcp.Catalog's ID-hydration contract.
+func (s *pgStore) GetFiles(ctx context.Context, ids []int64) (map[int64]*model.File, error) {
+	if len(ids) == 0 {
+		return map[int64]*model.File{}, nil
+	}
+	rows, err := s.pool.Query(ctx,
+		`SELECT id, repo_id, path, language, content_hash, module_name FROM files WHERE id = ANY($1)`,
+		ids,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("store: get files: %w", err)
+	}
+	defer rows.Close()
+
+	out := make(map[int64]*model.File, len(ids))
+	for rows.Next() {
+		f := &model.File{}
+		if err := rows.Scan(&f.ID, &f.RepoID, &f.Path, &f.Language, &f.ContentHash, &f.ModuleName); err != nil {
+			return nil, fmt.Errorf("store: get files: %w", err)
+		}
+		out[f.ID] = f
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("store: get files: %w", err)
+	}
+	return out, nil
+}
+
 func (s *pgStore) DeleteFile(ctx context.Context, fileID int64) error {
 	if _, err := s.pool.Exec(ctx, `DELETE FROM files WHERE id = $1`, fileID); err != nil {
 		return fmt.Errorf("store: delete file: %w", err)
+	}
+	return nil
+}
+
+// DeleteFileContents deletes fileID's chunks and symbols in one transaction,
+// leaving the File row itself in place. Chunks are deleted first and by
+// file_id directly (not via a cascade off symbols), because module-level
+// chunks (Chunk.SymbolID nil, per plan.md "AST-aware chunking") have no
+// symbol row to cascade from. Deleting symbols afterwards cascades their
+// edges and unresolved_refs per the FKs in migrations/00004 and 00005.
+func (s *pgStore) DeleteFileContents(ctx context.Context, fileID int64) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("store: delete file contents: begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck // no-op once committed
+
+	if _, err := tx.Exec(ctx, `DELETE FROM chunks WHERE file_id = $1`, fileID); err != nil {
+		return fmt.Errorf("store: delete file contents: delete chunks: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM symbols WHERE file_id = $1`, fileID); err != nil {
+		return fmt.Errorf("store: delete file contents: delete symbols: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("store: delete file contents: commit: %w", err)
 	}
 	return nil
 }
@@ -351,6 +408,37 @@ func (s *pgStore) FindSymbolsByName(ctx context.Context, repoID int64, name stri
 	return symbols, nil
 }
 
+// GetSymbols looks up symbols by ID with one `id = ANY($1)` query. The
+// result map is keyed by Symbol.ID; an ID with no matching row is simply
+// absent, matching internal/mcp.Catalog's ID-hydration contract.
+func (s *pgStore) GetSymbols(ctx context.Context, ids []int64) (map[int64]*model.Symbol, error) {
+	if len(ids) == 0 {
+		return map[int64]*model.Symbol{}, nil
+	}
+	rows, err := s.pool.Query(ctx,
+		`SELECT id, file_id, kind, name, qualified_name, parent_id, start_line, end_line, signature, docstring
+		 FROM symbols WHERE id = ANY($1)`,
+		ids,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("store: get symbols: %w", err)
+	}
+	defer rows.Close()
+
+	out := make(map[int64]*model.Symbol, len(ids))
+	for rows.Next() {
+		sym := &model.Symbol{}
+		if err := rows.Scan(&sym.ID, &sym.FileID, &sym.Kind, &sym.Name, &sym.QualifiedName, &sym.ParentID, &sym.StartLine, &sym.EndLine, &sym.Signature, &sym.Docstring); err != nil {
+			return nil, fmt.Errorf("store: get symbols: %w", err)
+		}
+		out[sym.ID] = sym
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("store: get symbols: %w", err)
+	}
+	return out, nil
+}
+
 // Edges
 
 func (s *pgStore) InsertEdges(ctx context.Context, edges []*model.Edge) error {
@@ -415,6 +503,24 @@ func (s *pgStore) queryEdges(ctx context.Context, query string, symbolID int64) 
 	return edges, nil
 }
 
+// LoadEdges returns every edge whose source symbol belongs to repoID in one
+// query, joining through symbols to files to scope by repo (edges itself
+// carries no repo_id). This is the bulk load internal/graph.Build needs;
+// GetCallers/GetCallees stay single-symbol for the MCP handlers that don't
+// need a whole-repo graph in memory. It does not implement graph.EdgeLoader
+// directly since that interface's method takes no repoID — bind repoID with
+// graph.EdgeLoaderFunc at the call site.
+func (s *pgStore) LoadEdges(ctx context.Context, repoID int64) ([]*model.Edge, error) {
+	return s.queryEdges(ctx,
+		`SELECT e.id, e.src_symbol_id, e.dst_symbol_id, e.kind, e.confidence
+		 FROM edges e
+		 JOIN symbols s ON s.id = e.src_symbol_id
+		 JOIN files f ON f.id = s.file_id
+		 WHERE f.repo_id = $1`,
+		repoID,
+	)
+}
+
 // Unresolved refs
 
 func (s *pgStore) InsertUnresolvedRefs(ctx context.Context, refs []*model.UnresolvedRef) error {
@@ -448,6 +554,38 @@ func (s *pgStore) InsertUnresolvedRefs(ctx context.Context, refs []*model.Unreso
 	return nil
 }
 
+// ListUnresolvedRefs returns every unresolved_refs row whose source symbol
+// belongs to repoID, joining through symbols to files to scope by repo
+// (unresolved_refs itself carries no repo_id), so recall gaps can be
+// inspected or reported per repo (see model.UnresolvedRef).
+func (s *pgStore) ListUnresolvedRefs(ctx context.Context, repoID int64) ([]*model.UnresolvedRef, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT r.id, r.src_symbol_id, r.name, r.kind
+		 FROM unresolved_refs r
+		 JOIN symbols s ON s.id = r.src_symbol_id
+		 JOIN files f ON f.id = s.file_id
+		 WHERE f.repo_id = $1`,
+		repoID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("store: list unresolved refs: %w", err)
+	}
+	defer rows.Close()
+
+	var refs []*model.UnresolvedRef
+	for rows.Next() {
+		r := &model.UnresolvedRef{}
+		if err := rows.Scan(&r.ID, &r.SrcSymbolID, &r.Name, &r.Kind); err != nil {
+			return nil, fmt.Errorf("store: list unresolved refs: %w", err)
+		}
+		refs = append(refs, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("store: list unresolved refs: %w", err)
+	}
+	return refs, nil
+}
+
 // Chunks
 
 func (s *pgStore) InsertChunks(ctx context.Context, chunks []*model.Chunk) error {
@@ -473,17 +611,54 @@ func (s *pgStore) InsertChunks(ctx context.Context, chunks []*model.Chunk) error
 		if c.Embedding != nil {
 			embedding = EncodeVector(c.Embedding)
 		}
-		rows[i] = []any{c.ID, c.SymbolID, c.FileID, c.Text, c.ContextHeader, c.TokenCount, embedding}
+		rows[i] = []any{c.ID, c.SymbolID, c.FileID, c.Text, c.ContextHeader, c.TokenCount, c.StartLine, c.EndLine, embedding}
 	}
 
 	_, err = s.pool.CopyFrom(ctx, pgx.Identifier{"chunks"},
-		[]string{"id", "symbol_id", "file_id", "text", "context_header", "token_count", "embedding"},
+		[]string{"id", "symbol_id", "file_id", "text", "context_header", "token_count", "start_line", "end_line", "embedding"},
 		pgx.CopyFromRows(rows),
 	)
 	if err != nil {
 		return fmt.Errorf("store: insert chunks: %w", err)
 	}
 	return nil
+}
+
+// GetChunks looks up chunks by ID with one `id = ANY($1)` query. The result
+// map is keyed by Chunk.ID; an ID with no matching row is simply absent,
+// matching internal/mcp.Catalog's ID-hydration contract. Embedding is nil in
+// the result for chunks whose embedding column is NULL (not yet embedded),
+// same as VectorSearch never returning those rows in the first place.
+func (s *pgStore) GetChunks(ctx context.Context, ids []int64) (map[int64]*model.Chunk, error) {
+	if len(ids) == 0 {
+		return map[int64]*model.Chunk{}, nil
+	}
+	rows, err := s.pool.Query(ctx,
+		`SELECT id, symbol_id, file_id, text, context_header, token_count, start_line, end_line, embedding
+		 FROM chunks WHERE id = ANY($1)`,
+		ids,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("store: get chunks: %w", err)
+	}
+	defer rows.Close()
+
+	out := make(map[int64]*model.Chunk, len(ids))
+	for rows.Next() {
+		c := &model.Chunk{}
+		var vec *pgvector.Vector
+		if err := rows.Scan(&c.ID, &c.SymbolID, &c.FileID, &c.Text, &c.ContextHeader, &c.TokenCount, &c.StartLine, &c.EndLine, &vec); err != nil {
+			return nil, fmt.Errorf("store: get chunks: %w", err)
+		}
+		if vec != nil {
+			c.Embedding = DecodeVector(*vec)
+		}
+		out[c.ID] = c
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("store: get chunks: %w", err)
+	}
+	return out, nil
 }
 
 // VectorSearch validates query against the configured embedding dimension
@@ -498,7 +673,7 @@ func (s *pgStore) VectorSearch(ctx context.Context, query []float32, limit int) 
 	}
 
 	sql := fmt.Sprintf(
-		`SELECT id, symbol_id, file_id, text, context_header, token_count, embedding
+		`SELECT id, symbol_id, file_id, text, context_header, token_count, start_line, end_line, embedding
 		 FROM chunks
 		 WHERE embedding IS NOT NULL
 		 ORDER BY embedding %s $1
@@ -515,7 +690,7 @@ func (s *pgStore) VectorSearch(ctx context.Context, query []float32, limit int) 
 	for rows.Next() {
 		c := &model.Chunk{}
 		var vec pgvector.Vector
-		if err := rows.Scan(&c.ID, &c.SymbolID, &c.FileID, &c.Text, &c.ContextHeader, &c.TokenCount, &vec); err != nil {
+		if err := rows.Scan(&c.ID, &c.SymbolID, &c.FileID, &c.Text, &c.ContextHeader, &c.TokenCount, &c.StartLine, &c.EndLine, &vec); err != nil {
 			return nil, fmt.Errorf("store: vector search: %w", err)
 		}
 		c.Embedding = DecodeVector(vec)

@@ -35,7 +35,9 @@ type Chunk struct {
 	FileID   int64
 
 	// StartLine and EndLine are the 1-indexed, inclusive source lines Text
-	// was sliced from (additive; not yet persisted by internal/store).
+	// was sliced from. Persisted by internal/store as the chunks.start_line
+	// and chunks.end_line columns (migrations/00009_add_chunk_lines.sql);
+	// rows inserted before that migration read back as 0/0 ("unknown span").
 	StartLine int
 	EndLine   int
 

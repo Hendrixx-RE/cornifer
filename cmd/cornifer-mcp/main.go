@@ -61,9 +61,7 @@ func main() {
 	}
 }
 
-// storeDeps wires the real backend. internal/store has no ID-based lookups
-// or bulk edge listing yet, so those capabilities report a clear error
-// (see storeCatalog) until the store grows them.
+// storeDeps wires the real backend.
 func storeDeps(ctx context.Context) (mcp.Deps, func(), error) {
 	repoID := int64(1)
 	if v := os.Getenv("CORNIFER_REPO_ID"); v != "" {
@@ -117,41 +115,26 @@ func storeDeps(ctx context.Context) (mcp.Deps, func(), error) {
 	return deps, func() { st.Close() }, nil
 }
 
-var errStoreGap = fmt.Errorf("not supported by internal/store yet (needs ID lookup / bulk edge listing)")
-
-// storeCatalog adapts store.Store to mcp.Catalog. Only files can be listed
-// today; chunk and symbol ID lookups are store gaps.
+// storeCatalog adapts store.Store to mcp.Catalog: a thin passthrough now
+// that internal/store has ID-based lookups and bulk edge listing. loadEdges
+// binds repoID to satisfy graph.EdgeLoader, whose LoadEdges takes no repoID.
 type storeCatalog struct {
 	st     store.Store
 	repoID int64
 }
 
 func (c storeCatalog) GetFiles(ctx context.Context, ids []int64) (map[int64]*model.File, error) {
-	files, err := c.st.ListFiles(ctx, c.repoID)
-	if err != nil {
-		return nil, err
-	}
-	want := make(map[int64]bool, len(ids))
-	for _, id := range ids {
-		want[id] = true
-	}
-	out := make(map[int64]*model.File, len(ids))
-	for _, f := range files {
-		if want[f.ID] {
-			out[f.ID] = f
-		}
-	}
-	return out, nil
+	return c.st.GetFiles(ctx, ids)
 }
 
-func (storeCatalog) GetChunks(context.Context, []int64) (map[int64]*model.Chunk, error) {
-	return nil, fmt.Errorf("chunk lookup: %w", errStoreGap)
+func (c storeCatalog) GetChunks(ctx context.Context, ids []int64) (map[int64]*model.Chunk, error) {
+	return c.st.GetChunks(ctx, ids)
 }
 
-func (storeCatalog) GetSymbols(context.Context, []int64) (map[int64]*model.Symbol, error) {
-	return nil, fmt.Errorf("symbol lookup by id: %w", errStoreGap)
+func (c storeCatalog) GetSymbols(ctx context.Context, ids []int64) (map[int64]*model.Symbol, error) {
+	return c.st.GetSymbols(ctx, ids)
 }
 
-func (storeCatalog) loadEdges(context.Context) ([]*model.Edge, error) {
-	return nil, fmt.Errorf("edge listing: %w", errStoreGap)
+func (c storeCatalog) loadEdges(ctx context.Context) ([]*model.Edge, error) {
+	return c.st.LoadEdges(ctx, c.repoID)
 }

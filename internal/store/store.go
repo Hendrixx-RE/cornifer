@@ -42,10 +42,23 @@ type Store interface {
 	UpsertFiles(ctx context.Context, files []*model.File) error
 	// ListFiles returns every File belonging to repoID.
 	ListFiles(ctx context.Context, repoID int64) ([]*model.File, error)
+	// GetFiles looks up files by ID. Returns a map keyed by File.ID rather
+	// than a slice: order is not preserved, and any ID with no matching row
+	// is simply absent from the result (not an error) — the convention the
+	// MCP catalog's ID-hydration needs (internal/mcp.Catalog).
+	GetFiles(ctx context.Context, ids []int64) (map[int64]*model.File, error)
 	// DeleteFile removes a File and, via ON DELETE CASCADE, its symbols,
 	// edges, unresolved_refs, and chunks — the incremental-reindex path for
 	// a file that no longer exists.
 	DeleteFile(ctx context.Context, fileID int64) error
+	// DeleteFileContents transactionally deletes fileID's chunks and symbols
+	// (which cascades to their edges and unresolved_refs), leaving the File
+	// row itself untouched — the incremental-reindex path for a file whose
+	// content_hash changed and is about to be re-parsed and re-upserted in
+	// place. Chunks are deleted first and by file_id directly, since
+	// module-level chunks (Chunk.SymbolID nil) have no symbol row to cascade
+	// from.
+	DeleteFileContents(ctx context.Context, fileID int64) error
 
 	// Symbols
 
@@ -70,6 +83,9 @@ type Store interface {
 	// Symbol named exactly name, for disambiguation when multiple
 	// candidates share a bare name.
 	FindSymbolsByName(ctx context.Context, repoID int64, name string) ([]*model.Symbol, error)
+	// GetSymbols looks up symbols by ID. Same map-keyed, missing-is-absent
+	// convention as GetFiles.
+	GetSymbols(ctx context.Context, ids []int64) (map[int64]*model.Symbol, error)
 
 	// Edges
 
@@ -81,11 +97,22 @@ type Store interface {
 	// GetCallees returns edges whose SrcSymbolID is symbolID — i.e. every
 	// resolved reference it makes, of any EdgeKind.
 	GetCallees(ctx context.Context, symbolID int64) ([]*model.Edge, error)
+	// LoadEdges returns every edge whose source symbol belongs to repoID, in
+	// one query — the bulk load internal/graph.Build needs to construct a
+	// whole-repo Graph. It does not itself implement graph.EdgeLoader
+	// (that interface's LoadEdges takes no repoID); callers bind repoID
+	// with a closure or graph.EdgeLoaderFunc, e.g.
+	// graph.EdgeLoaderFunc(func(ctx) { return st.LoadEdges(ctx, repoID) }).
+	LoadEdges(ctx context.Context, repoID int64) ([]*model.Edge, error)
 
 	// Unresolved refs
 
 	// InsertUnresolvedRefs bulk-inserts unresolved_refs rows.
 	InsertUnresolvedRefs(ctx context.Context, refs []*model.UnresolvedRef) error
+	// ListUnresolvedRefs returns every unresolved_refs row whose source
+	// symbol belongs to repoID, so recall gaps (see model.UnresolvedRef) can
+	// be inspected or reported per repo.
+	ListUnresolvedRefs(ctx context.Context, repoID int64) ([]*model.UnresolvedRef, error)
 
 	// Chunks
 
@@ -93,6 +120,9 @@ type Store interface {
 	// already computed (Embedding may be nil to insert text first and embed
 	// later).
 	InsertChunks(ctx context.Context, chunks []*model.Chunk) error
+	// GetChunks looks up chunks by ID. Same map-keyed, missing-is-absent
+	// convention as GetFiles.
+	GetChunks(ctx context.Context, ids []int64) (map[int64]*model.Chunk, error)
 	// VectorSearch returns the limit chunks with embeddings nearest to
 	// query, ordered closest first, using the HNSW index on
 	// chunks.embedding. len(query) must equal the configured embedding
@@ -129,7 +159,15 @@ func (unimplemented) ListFiles(ctx context.Context, repoID int64) ([]*model.File
 	return nil, model.ErrNotImplemented
 }
 
+func (unimplemented) GetFiles(ctx context.Context, ids []int64) (map[int64]*model.File, error) {
+	return nil, model.ErrNotImplemented
+}
+
 func (unimplemented) DeleteFile(ctx context.Context, fileID int64) error {
+	return model.ErrNotImplemented
+}
+
+func (unimplemented) DeleteFileContents(ctx context.Context, fileID int64) error {
 	return model.ErrNotImplemented
 }
 
@@ -149,6 +187,10 @@ func (unimplemented) FindSymbolsByName(ctx context.Context, repoID int64, name s
 	return nil, model.ErrNotImplemented
 }
 
+func (unimplemented) GetSymbols(ctx context.Context, ids []int64) (map[int64]*model.Symbol, error) {
+	return nil, model.ErrNotImplemented
+}
+
 func (unimplemented) InsertEdges(ctx context.Context, edges []*model.Edge) error {
 	return model.ErrNotImplemented
 }
@@ -161,12 +203,24 @@ func (unimplemented) GetCallees(ctx context.Context, symbolID int64) ([]*model.E
 	return nil, model.ErrNotImplemented
 }
 
+func (unimplemented) LoadEdges(ctx context.Context, repoID int64) ([]*model.Edge, error) {
+	return nil, model.ErrNotImplemented
+}
+
 func (unimplemented) InsertUnresolvedRefs(ctx context.Context, refs []*model.UnresolvedRef) error {
 	return model.ErrNotImplemented
 }
 
+func (unimplemented) ListUnresolvedRefs(ctx context.Context, repoID int64) ([]*model.UnresolvedRef, error) {
+	return nil, model.ErrNotImplemented
+}
+
 func (unimplemented) InsertChunks(ctx context.Context, chunks []*model.Chunk) error {
 	return model.ErrNotImplemented
+}
+
+func (unimplemented) GetChunks(ctx context.Context, ids []int64) (map[int64]*model.Chunk, error) {
+	return nil, model.ErrNotImplemented
 }
 
 func (unimplemented) VectorSearch(ctx context.Context, query []float32, limit int) ([]*model.Chunk, error) {

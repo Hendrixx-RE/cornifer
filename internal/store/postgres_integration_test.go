@@ -257,6 +257,247 @@ func TestPostgresRoundTrip(t *testing.T) {
 	}
 }
 
+// TestGetByIDLookups exercises GetFiles, GetSymbols, and GetChunks: the
+// map-keyed, missing-is-absent bulk lookups internal/mcp.Catalog needs to
+// hydrate bare IDs returned by retrieval and graph traversals.
+func TestGetByIDLookups(t *testing.T) {
+	s := connectOrSkip(t)
+	ctx := context.Background()
+	repo := newTestRepo(t, s, ctx)
+
+	file := &model.File{RepoID: repo.ID, Path: "pkg/lookup.py", Language: "python", ContentHash: "h"}
+	if err := s.UpsertFiles(ctx, []*model.File{file}); err != nil {
+		t.Fatalf("UpsertFiles() error = %v", err)
+	}
+
+	sym := &model.Symbol{
+		FileID: file.ID, Kind: model.SymbolKindFunction, Name: "f",
+		QualifiedName: "pkg.lookup.f", StartLine: 1, EndLine: 2,
+	}
+	if err := s.InsertSymbols(ctx, []*model.Symbol{sym}); err != nil {
+		t.Fatalf("InsertSymbols() error = %v", err)
+	}
+
+	chunk := &model.Chunk{
+		SymbolID: &sym.ID, FileID: file.ID, Text: "def f():\n    pass",
+		ContextHeader: "pkg/lookup.py f", TokenCount: 4, StartLine: 1, EndLine: 2,
+	}
+	if err := s.InsertChunks(ctx, []*model.Chunk{chunk}); err != nil {
+		t.Fatalf("InsertChunks() error = %v", err)
+	}
+
+	// Missing IDs are absent from the map, not an error; a nonexistent ID is
+	// mixed in with a real one to check that.
+	const missingID = -1
+
+	files, err := s.GetFiles(ctx, []int64{file.ID, missingID})
+	if err != nil {
+		t.Fatalf("GetFiles() error = %v", err)
+	}
+	if len(files) != 1 || files[file.ID] == nil || files[file.ID].Path != file.Path {
+		t.Errorf("GetFiles() = %+v, want single entry for file %d", files, file.ID)
+	}
+	if _, ok := files[missingID]; ok {
+		t.Errorf("GetFiles() has entry for missing id %d, want absent", missingID)
+	}
+
+	syms, err := s.GetSymbols(ctx, []int64{sym.ID, missingID})
+	if err != nil {
+		t.Fatalf("GetSymbols() error = %v", err)
+	}
+	if len(syms) != 1 || syms[sym.ID] == nil || syms[sym.ID].QualifiedName != sym.QualifiedName {
+		t.Errorf("GetSymbols() = %+v, want single entry for symbol %d", syms, sym.ID)
+	}
+
+	chunks, err := s.GetChunks(ctx, []int64{chunk.ID, missingID})
+	if err != nil {
+		t.Fatalf("GetChunks() error = %v", err)
+	}
+	got, ok := chunks[chunk.ID]
+	if !ok || len(chunks) != 1 {
+		t.Fatalf("GetChunks() = %+v, want single entry for chunk %d", chunks, chunk.ID)
+	}
+	if got.StartLine != chunk.StartLine || got.EndLine != chunk.EndLine {
+		t.Errorf("GetChunks() start/end line = %d/%d, want %d/%d", got.StartLine, got.EndLine, chunk.StartLine, chunk.EndLine)
+	}
+
+	// Empty/nil ids returns an empty, non-nil map rather than erroring.
+	if empty, err := s.GetFiles(ctx, nil); err != nil || len(empty) != 0 {
+		t.Errorf("GetFiles(nil) = %+v, err = %v, want empty map, nil error", empty, err)
+	}
+}
+
+// TestChunkLinesRoundTrip verifies StartLine/EndLine survive InsertChunks →
+// VectorSearch (migrations/00009_add_chunk_lines.sql).
+func TestChunkLinesRoundTrip(t *testing.T) {
+	s := connectOrSkip(t)
+	ctx := context.Background()
+	repo := newTestRepo(t, s, ctx)
+
+	file := &model.File{RepoID: repo.ID, Path: "pkg/lines.py", Language: "python", ContentHash: "h"}
+	if err := s.UpsertFiles(ctx, []*model.File{file}); err != nil {
+		t.Fatalf("UpsertFiles() error = %v", err)
+	}
+
+	embedded := make([]float32, s.embeddingDim)
+	embedded[0] = 1
+	chunk := &model.Chunk{
+		FileID: file.ID, Text: "x = 1", TokenCount: 2,
+		StartLine: 42, EndLine: 44, Embedding: embedded,
+	}
+	if err := s.InsertChunks(ctx, []*model.Chunk{chunk}); err != nil {
+		t.Fatalf("InsertChunks() error = %v", err)
+	}
+
+	results, err := s.VectorSearch(ctx, embedded, 1)
+	if err != nil {
+		t.Fatalf("VectorSearch() error = %v", err)
+	}
+	if len(results) != 1 || results[0].StartLine != 42 || results[0].EndLine != 44 {
+		t.Fatalf("VectorSearch() = %+v, want StartLine=42 EndLine=44", results)
+	}
+}
+
+// TestLoadEdgesAndUnresolvedRefsScopeByRepo verifies LoadEdges and
+// ListUnresolvedRefs only return rows belonging to the requested repo, not
+// rows from a second, unrelated repo (both join through symbols/files since
+// neither edges nor unresolved_refs carries a repo_id column directly).
+func TestLoadEdgesAndUnresolvedRefsScopeByRepo(t *testing.T) {
+	s := connectOrSkip(t)
+	ctx := context.Background()
+
+	repoA := newTestRepo(t, s, ctx)
+	repoB := newTestRepo(t, s, ctx)
+
+	mkFileAndSymbols := func(repo *model.Repo, suffix string) (*model.Symbol, *model.Symbol) {
+		file := &model.File{RepoID: repo.ID, Path: "pkg/" + suffix + ".py", Language: "python", ContentHash: "h"}
+		if err := s.UpsertFiles(ctx, []*model.File{file}); err != nil {
+			t.Fatalf("UpsertFiles() error = %v", err)
+		}
+		src := &model.Symbol{FileID: file.ID, Kind: model.SymbolKindFunction, Name: "a", QualifiedName: "pkg." + suffix + ".a", StartLine: 1, EndLine: 1}
+		dst := &model.Symbol{FileID: file.ID, Kind: model.SymbolKindFunction, Name: "b", QualifiedName: "pkg." + suffix + ".b", StartLine: 2, EndLine: 2}
+		if err := s.InsertSymbols(ctx, []*model.Symbol{src, dst}); err != nil {
+			t.Fatalf("InsertSymbols() error = %v", err)
+		}
+		return src, dst
+	}
+
+	srcA, dstA := mkFileAndSymbols(repoA, "a")
+	srcB, dstB := mkFileAndSymbols(repoB, "b")
+
+	edgeA := &model.Edge{SrcSymbolID: srcA.ID, DstSymbolID: dstA.ID, Kind: model.EdgeKindCalls, Confidence: model.ConfidenceExact}
+	edgeB := &model.Edge{SrcSymbolID: srcB.ID, DstSymbolID: dstB.ID, Kind: model.EdgeKindCalls, Confidence: model.ConfidenceExact}
+	if err := s.InsertEdges(ctx, []*model.Edge{edgeA, edgeB}); err != nil {
+		t.Fatalf("InsertEdges() error = %v", err)
+	}
+
+	refA := &model.UnresolvedRef{SrcSymbolID: srcA.ID, Name: "os.path", Kind: model.EdgeKindImports}
+	refB := &model.UnresolvedRef{SrcSymbolID: srcB.ID, Name: "sys.argv", Kind: model.EdgeKindImports}
+	if err := s.InsertUnresolvedRefs(ctx, []*model.UnresolvedRef{refA, refB}); err != nil {
+		t.Fatalf("InsertUnresolvedRefs() error = %v", err)
+	}
+
+	edgesA, err := s.LoadEdges(ctx, repoA.ID)
+	if err != nil {
+		t.Fatalf("LoadEdges() error = %v", err)
+	}
+	if len(edgesA) != 1 || edgesA[0].ID != edgeA.ID {
+		t.Errorf("LoadEdges(repoA) = %+v, want only edgeA", edgesA)
+	}
+
+	refsA, err := s.ListUnresolvedRefs(ctx, repoA.ID)
+	if err != nil {
+		t.Fatalf("ListUnresolvedRefs() error = %v", err)
+	}
+	if len(refsA) != 1 || refsA[0].ID != refA.ID {
+		t.Errorf("ListUnresolvedRefs(repoA) = %+v, want only refA", refsA)
+	}
+}
+
+// TestDeleteFileContentsIsTransactionalAndScoped verifies DeleteFileContents
+// removes a file's chunks (both symbol-scoped and module-level) and symbols
+// (cascading their edges and unresolved_refs), while leaving the File row
+// and a second, unrelated file's data untouched.
+func TestDeleteFileContentsIsTransactionalAndScoped(t *testing.T) {
+	s := connectOrSkip(t)
+	ctx := context.Background()
+	repo := newTestRepo(t, s, ctx)
+
+	target := &model.File{RepoID: repo.ID, Path: "pkg/target.py", Language: "python", ContentHash: "h1"}
+	other := &model.File{RepoID: repo.ID, Path: "pkg/other.py", Language: "python", ContentHash: "h2"}
+	if err := s.UpsertFiles(ctx, []*model.File{target, other}); err != nil {
+		t.Fatalf("UpsertFiles() error = %v", err)
+	}
+
+	sym := &model.Symbol{FileID: target.ID, Kind: model.SymbolKindFunction, Name: "f", QualifiedName: "pkg.target.f", StartLine: 1, EndLine: 1}
+	otherSym := &model.Symbol{FileID: other.ID, Kind: model.SymbolKindFunction, Name: "g", QualifiedName: "pkg.other.g", StartLine: 1, EndLine: 1}
+	if err := s.InsertSymbols(ctx, []*model.Symbol{sym, otherSym}); err != nil {
+		t.Fatalf("InsertSymbols() error = %v", err)
+	}
+
+	edge := &model.Edge{SrcSymbolID: sym.ID, DstSymbolID: otherSym.ID, Kind: model.EdgeKindCalls, Confidence: model.ConfidenceExact}
+	if err := s.InsertEdges(ctx, []*model.Edge{edge}); err != nil {
+		t.Fatalf("InsertEdges() error = %v", err)
+	}
+	ref := &model.UnresolvedRef{SrcSymbolID: sym.ID, Name: "requests.get", Kind: model.EdgeKindCalls}
+	if err := s.InsertUnresolvedRefs(ctx, []*model.UnresolvedRef{ref}); err != nil {
+		t.Fatalf("InsertUnresolvedRefs() error = %v", err)
+	}
+
+	symChunk := &model.Chunk{SymbolID: &sym.ID, FileID: target.ID, Text: "def f(): pass", TokenCount: 3}
+	moduleChunk := &model.Chunk{FileID: target.ID, Text: "x = 1", TokenCount: 2} // no SymbolID: module-level
+	otherChunk := &model.Chunk{FileID: other.ID, Text: "y = 2", TokenCount: 2}
+	if err := s.InsertChunks(ctx, []*model.Chunk{symChunk, moduleChunk, otherChunk}); err != nil {
+		t.Fatalf("InsertChunks() error = %v", err)
+	}
+
+	if err := s.DeleteFileContents(ctx, target.ID); err != nil {
+		t.Fatalf("DeleteFileContents() error = %v", err)
+	}
+
+	// The File row itself survives.
+	files, err := s.ListFiles(ctx, repo.ID)
+	if err != nil {
+		t.Fatalf("ListFiles() error = %v", err)
+	}
+	if len(files) != 2 {
+		t.Errorf("ListFiles() after DeleteFileContents() = %+v, want both file rows to remain", files)
+	}
+
+	// target's symbols, chunks (both kinds), edges, and unresolved_refs are
+	// gone; other's are untouched.
+	if _, err := s.FindSymbolByQualifiedName(ctx, repo.ID, "pkg.target.f"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("FindSymbolByQualifiedName(target) err = %v, want ErrNotFound", err)
+	}
+	if _, err := s.FindSymbolByQualifiedName(ctx, repo.ID, "pkg.other.g"); err != nil {
+		t.Errorf("FindSymbolByQualifiedName(other) err = %v, want found", err)
+	}
+
+	chunks, err := s.GetChunks(ctx, []int64{symChunk.ID, moduleChunk.ID, otherChunk.ID})
+	if err != nil {
+		t.Fatalf("GetChunks() error = %v", err)
+	}
+	if len(chunks) != 1 || chunks[otherChunk.ID] == nil {
+		t.Errorf("GetChunks() after DeleteFileContents() = %+v, want only otherChunk", chunks)
+	}
+
+	edgesLeft, err := s.LoadEdges(ctx, repo.ID)
+	if err != nil {
+		t.Fatalf("LoadEdges() error = %v", err)
+	}
+	if len(edgesLeft) != 0 {
+		t.Errorf("LoadEdges() after DeleteFileContents() = %+v, want none (edge cascaded via deleted symbol)", edgesLeft)
+	}
+
+	refsLeft, err := s.ListUnresolvedRefs(ctx, repo.ID)
+	if err != nil {
+		t.Fatalf("ListUnresolvedRefs() error = %v", err)
+	}
+	if len(refsLeft) != 0 {
+		t.Errorf("ListUnresolvedRefs() after DeleteFileContents() = %+v, want none (cascaded via deleted symbol)", refsLeft)
+	}
+}
+
 func TestInsertChunksRejectsWrongEmbeddingDim(t *testing.T) {
 	s := connectOrSkip(t)
 	ctx := context.Background()
