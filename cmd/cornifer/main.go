@@ -1,8 +1,9 @@
-// Command cornifer is the Cornifer CLI: index, reindex, query, and eval
+// Command cornifer is the Cornifer CLI: index, reindex, query, eval, and
+// structural (find-definition, callers, callees, blast-radius, cycles)
 // subcommands over a Postgres-backed structural + semantic index of a
-// target repo. See plan.md for the full architecture; Phase 0 wires the
-// command surface with every subcommand returning model.ErrNotImplemented
-// — later waves fill in the RunE bodies.
+// target repo. See plan.md for the full architecture. index/reindex/query
+// and the structural commands are implemented by internal/indexer; eval is
+// still a Phase 0 stub (model.ErrNotImplemented) pending the eval wave.
 package main
 
 import (
@@ -33,6 +34,11 @@ func newRootCmd() *cobra.Command {
 		newReindexCmd(),
 		newQueryCmd(),
 		newEvalCmd(),
+		newFindDefinitionCmd(),
+		newCallersCmd(),
+		newCalleesCmd(),
+		newBlastRadiusCmd(),
+		newCyclesCmd(),
 	)
 
 	return root

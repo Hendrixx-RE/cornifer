@@ -12,3 +12,4 @@
 # Editors / OS
 .DS_Store
 *.swp
+/.cornifer-cache/
