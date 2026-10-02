@@ -1,4 +1,4 @@
-.PHONY: up down migrate fetch-repo index query test lint fmt
+.PHONY: up down migrate fetch-repo index query eval test lint fmt
 
 CORNIFER_DATABASE_URL ?= postgres://cornifer:cornifer@localhost:5433/cornifer?sslmode=disable
 
@@ -20,6 +20,9 @@ index:
 
 query:
 	go run ./cmd/cornifer query "$(Q)"
+
+eval:
+	go run ./cmd/cornifer eval
 
 test:
 	go test ./...

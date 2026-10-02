@@ -1,23 +1,140 @@
 package main
 
 import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+
 	"github.com/spf13/cobra"
 
-	"github.com/Hendrixx-RE/cornifer/internal/model"
+	"github.com/Hendrixx-RE/cornifer/internal/embed"
+	cornefval "github.com/Hendrixx-RE/cornifer/internal/eval"
+	"github.com/Hendrixx-RE/cornifer/internal/indexer"
 )
 
 func newEvalCmd() *cobra.Command {
-	var queriesPath string
+	var (
+		queriesPath     string
+		outputPath      string
+		repoPath        string
+		embedProvider   string
+		indexedProvider string
+		globals         globalFlags
+	)
 
 	cmd := &cobra.Command{
 		Use:   "eval",
 		Short: "Run the hand-labeled eval set against each retrieval system and report precision@5/recall@5/MRR",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return model.ErrNotImplemented
+			ctx := cmd.Context()
+			dataset, err := cornefval.Load(queriesPath)
+			if err != nil {
+				return err
+			}
+
+			sess, st, err := openSession(ctx, repoPath, &globals)
+			if err != nil {
+				return err
+			}
+			defer st.Close()
+
+			sparse, err := sess.LoadBM25(globals.cacheDir)
+			if err != nil {
+				return err
+			}
+			provider := resolvedEmbedProvider(embed.Provider(embedProvider))
+			indexProvider := embed.Provider(indexedProvider)
+			if indexProvider != "" && indexProvider != provider {
+				return fmt.Errorf("index embedding provider %q does not match query provider %q; vector retrieval requires the same embedding space", indexProvider, provider)
+			}
+			embedder, err := indexer.BuildEmbedder(embed.Config{Provider: provider})
+			if err != nil {
+				return fmt.Errorf("build embedder: %w", err)
+			}
+
+			report, err := cornefval.Run(ctx, dataset, cornefval.Config{
+				RepoRoot:  sess.Manifest.Root,
+				CommitSHA: sess.Manifest.CommitSHA,
+				Manifest:  sess.Manifest,
+				Sparse:    sparse,
+				Vector:    st,
+				Embedder:  embedder,
+				Embedding: embeddingMetadata(provider, indexProvider),
+			})
+			if err != nil {
+				return err
+			}
+			if outputPath == "" {
+				outputPath = filepath.Join("eval", "results", fmt.Sprintf("fastapi-%s-%s.json", shortSHA(sess.Manifest.CommitSHA), provider))
+			}
+			if err := cornefval.WriteReport(outputPath, report); err != nil {
+				return err
+			}
+
+			cmd.Printf("wrote raw results: %s\n", outputPath)
+			cmd.Printf("target: %s @ %s; labels: source=%d ide=%d\n", report.Target.Repository, report.IndexCommit, report.LabelCounts[cornefval.VerificationSource], report.LabelCounts[cornefval.VerificationIDE])
+			for _, result := range report.Systems {
+				cmd.Printf("%-28s precision@5=%.3f recall@5=%.3f MRR=%.3f\n", result.System, result.Metrics.Precision5, result.Metrics.Recall5, result.Metrics.MRR)
+			}
+			if !report.GraphBoost.Available {
+				cmd.Printf("graph boost: unavailable — %s\n", report.GraphBoost.Reason)
+			}
+			if !report.Embedding.SemanticallyMeaningful {
+				if provider == embed.ProviderFake {
+					cmd.PrintErr("warning: fake embeddings are deterministic but not semantic; vector/hybrid rows are pipeline checks, not semantic-retrieval evidence\n")
+				} else {
+					cmd.PrintErr("warning: the indexed embedding provider was not declared; vector/hybrid rows are not semantic-retrieval evidence until --indexed-embed-provider confirms it\n")
+				}
+			}
+			return nil
 		},
 	}
 
 	cmd.Flags().StringVar(&queriesPath, "queries", "eval/queries.yaml", "path to the hand-labeled eval queries file")
+	cmd.Flags().StringVar(&outputPath, "output", "", "path for raw JSON results (default: eval/results/fastapi-<commit>-<provider>.json)")
+	addRepoFlag(cmd, &repoPath)
+	addGlobalFlags(cmd, &globals)
+	embedderProviderFlag(cmd, &embedProvider)
+	cmd.Flags().StringVar(&indexedProvider, "indexed-embed-provider", "", "provider used while indexing (must match --embed-provider when set; otherwise recorded as an unverified assumption)")
 
 	return cmd
+}
+
+func resolvedEmbedProvider(provider embed.Provider) embed.Provider {
+	if provider != "" {
+		return provider
+	}
+	if os.Getenv(embed.VoyageAPIKeyEnvVar) != "" {
+		return embed.ProviderVoyage
+	}
+	return embed.ProviderFake
+}
+
+func embeddingMetadata(provider, indexedProvider embed.Provider) cornefval.EmbeddingMetadata {
+	indexedSource := "declared with --indexed-embed-provider"
+	providerDeclared := indexedProvider != ""
+	if indexedProvider == "" {
+		// Index manifests from the prior milestone do not persist embedding
+		// provenance. Keep the convenient default, but make the assumption
+		// visible in raw results rather than misrepresenting it as observed.
+		indexedProvider = provider
+		indexedSource = "assumed equal to query provider; index manifest does not record it"
+	}
+	switch provider {
+	case embed.ProviderVoyage:
+		return cornefval.EmbeddingMetadata{QueryProvider: string(provider), QueryModel: embed.DefaultVoyageModel, IndexedProvider: string(indexedProvider), IndexedModel: embed.DefaultVoyageModel, IndexProviderSource: indexedSource, SemanticallyMeaningful: providerDeclared}
+	case embed.ProviderSidecar:
+		return cornefval.EmbeddingMetadata{QueryProvider: string(provider), QueryModel: "sidecar model (provider does not report a model id)", IndexedProvider: string(indexedProvider), IndexedModel: "sidecar model (provider does not report a model id)", IndexProviderSource: indexedSource, SemanticallyMeaningful: providerDeclared}
+	default:
+		return cornefval.EmbeddingMetadata{QueryProvider: string(provider), QueryModel: "deterministic hash-derived fake", IndexedProvider: string(indexedProvider), IndexedModel: "deterministic hash-derived fake", IndexProviderSource: indexedSource, SemanticallyMeaningful: false}
+	}
+}
+
+func shortSHA(sha string) string {
+	sha = strings.TrimSpace(sha)
+	if len(sha) > 12 {
+		return sha[:12]
+	}
+	return sha
 }

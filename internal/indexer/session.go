@@ -95,6 +95,18 @@ func (s *Session) Location(sym *model.Symbol) string {
 // NewHybridSearcher builds a HybridSearcher over the session's cached BM25
 // index (loaded fresh from disk) and the live Store's vector search.
 func (s *Session) NewHybridSearcher(cacheDir string, embedder embed.Embedder, cfg retrieve.Config) (*retrieve.HybridSearcher, error) {
+	sparse, err := s.LoadBM25(cacheDir)
+	if err != nil {
+		return nil, err
+	}
+	return retrieve.NewHybridSearcher(sparse, s.Store, embedder, cfg), nil
+}
+
+// LoadBM25 opens the persisted lexical index associated with this session.
+// Evaluation needs the sparse-only ranking in addition to hybrid search, so
+// exposing this narrow loader avoids duplicating cache-path knowledge in the
+// CLI package.
+func (s *Session) LoadBM25(cacheDir string) (bm25.SparseIndex, error) {
 	dir, err := resolveCacheDir(cacheDir)
 	if err != nil {
 		return nil, err
@@ -103,5 +115,5 @@ func (s *Session) NewHybridSearcher(cacheDir string, embedder embed.Embedder, cf
 	if err != nil {
 		return nil, fmt.Errorf("indexer: load bm25 index (run `cornifer index` first?): %w", err)
 	}
-	return retrieve.NewHybridSearcher(sparse, s.Store, embedder, cfg), nil
+	return sparse, nil
 }

@@ -3,12 +3,14 @@ package main
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/Hendrixx-RE/cornifer/internal/indexer"
 	"github.com/Hendrixx-RE/cornifer/internal/store"
 )
 
@@ -66,6 +68,23 @@ def run():
 `)
 
 	return root
+}
+
+// writeFixtureEvalDataset makes a valid 20-query corpus for the temporary
+// repo used by TestEndToEndFixtureRepo. It intentionally labels source spans
+// rather than pretending this tiny fixture has IDE-verification coverage.
+func writeFixtureEvalDataset(t *testing.T, repoRoot, commit string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "queries.yaml")
+	data := "version: 1\ntarget:\n  repository: fixture\n  commit: " + commit + "\nqueries:\n"
+	for i := 0; i < 20; i++ {
+		typ := []string{"structural", "semantic", "identifier"}[i%3]
+		data += fmt.Sprintf("  - id: fixture-%02d\n    type: %s\n    query: greeter\n    verification: source\n    evidence: foo.py:4 (fixture source inspected)\n    relevant:\n      - path: foo.py\n        start_line: 4\n        end_line: 4\n        symbol: foo.Greeter\n", i, typ)
+	}
+	if err := os.WriteFile(path, []byte(data), 0o644); err != nil {
+		t.Fatalf("write eval dataset: %v", err)
+	}
+	return path
 }
 
 func mustWrite(t *testing.T, path, content string) {
@@ -163,5 +182,25 @@ func TestEndToEndFixtureRepo(t *testing.T) {
 	}
 	if strings.Contains(out, "no results") {
 		t.Errorf("query output = %q, want at least one result", out)
+	}
+
+	// eval: all retrieval systems, source-label validation, metrics, and raw
+	// JSON output. This remains in the database-gated test so normal unit
+	// tests need neither Docker nor a real embedding provider.
+	commit, err := indexer.ResolveCommitSHA(repoRoot)
+	if err != nil {
+		t.Fatalf("resolve fixture commit: %v", err)
+	}
+	queries := writeFixtureEvalDataset(t, repoRoot, commit)
+	results := filepath.Join(t.TempDir(), "results.json")
+	out, err = runCLI(t, "eval", "--repo", repoRoot, "--cache-dir", cacheDir, "--embed-provider", "fake", "--queries", queries, "--output", results)
+	if err != nil {
+		t.Fatalf("eval: %v\noutput:\n%s", err, out)
+	}
+	if !strings.Contains(out, "wrote raw results:") || !strings.Contains(out, "ripgrep") {
+		t.Errorf("eval output missing expected systems/artifact:\n%s", out)
+	}
+	if _, err := os.Stat(results); err != nil {
+		t.Errorf("eval results not written: %v", err)
 	}
 }

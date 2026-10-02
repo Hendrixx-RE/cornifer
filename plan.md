@@ -159,13 +159,26 @@ cornifer/
 - [ ] Thin HTTP layer over the same handlers so external agents can call without MCP.
 
 **Days 18–19: evaluation (non-negotiable)**
-- [ ] Hand-build 20–30 queries in `eval/queries.yaml`, mixing types:
+- [x] Hand-build 20–30 queries in `eval/queries.yaml`, mixing types:
   - structural (find references / callers / blast radius) — ground truth verified with IDE "find references" (Pyright/Pylance) on the pinned commit;
   - semantic / vocabulary-mismatch (e.g. "rate limiting"-style intent queries);
   - exact-identifier lookups (where grep should do well — be honest).
-- [ ] Systems compared: **hybrid (full)**, hybrid without graph boost, BM25-only, vector-only, `grep`/ripgrep baseline.
-- [ ] Metrics: precision@5, recall@5, MRR; broken out per query type. Commit the raw results.
-- [ ] Failure analysis: for the misses, note whether the cause was resolution heuristics, chunking, or embedding.
+- [x] The committed set has 22 source-grounded FastAPI queries at
+  `40e33e492dbf4af6172997f4e3238a32e56cbe26` (7 structural, 7 semantic,
+  8 identifier). It contains **no IDE-verified labels**: source inspection is
+  explicitly recorded instead of fabricating Pyright/Pylance checks.
+- [x] `cornifer eval` runs hybrid, BM25-only, vector-only, and ripgrep. It
+  would include hybrid-without-graph-boost only when a real boost is wired;
+  graph boosting is currently absent, so reports state that limitation rather
+  than emit a meaningless duplicate row.
+- [x] `cornifer eval` calculates precision@5, recall@5, and MRR overall and
+  per query type, and writes reproducible raw JSON containing target/index
+  SHA, label provenance, provider/model metadata, and exact top-five ranks.
+- [ ] Run and commit a **real-embedding FastAPI** raw result. The current
+  worktree has the pinned source but no Docker daemon/Postgres, so no target
+  numbers were invented from fake embeddings.
+- [ ] Failure analysis: classify actual target misses after the real-embedding
+  result exists (resolution heuristics vs. chunking vs. embeddings).
 
 **Days 20–21: polish**
 - [ ] Incremental reindex: diff `content_hash`, re-parse changed files, delete/reinsert their symbols/chunks, re-resolve edges touching them.

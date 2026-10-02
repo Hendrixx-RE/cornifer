@@ -4,19 +4,23 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/Hendrixx-RE/cornifer/internal/embed"
 	"github.com/Hendrixx-RE/cornifer/internal/model"
 )
 
-// TestEvalIsNotImplemented documents the one subcommand still a Phase 0
-// stub: eval, pending the eval wave (plan.md "Days 18-19: evaluation").
-func TestEvalIsNotImplemented(t *testing.T) {
+// TestEvalIsWired confirms eval no longer returns the old implementation
+// sentinel before it validates its input or opens its database-backed index.
+func TestEvalIsWired(t *testing.T) {
 	root := newRootCmd()
-	root.SetArgs([]string{"eval"})
+	root.SetArgs([]string{"eval", "--queries", "does-not-exist.yaml"})
 	root.SilenceUsage = true
 	root.SilenceErrors = true
 	err := root.Execute()
-	if !errors.Is(err, model.ErrNotImplemented) {
-		t.Errorf("cornifer eval: err = %v, want ErrNotImplemented", err)
+	if err == nil {
+		t.Fatal("cornifer eval unexpectedly succeeded")
+	}
+	if errors.Is(err, model.ErrNotImplemented) {
+		t.Errorf("cornifer eval: err = %v, must not be ErrNotImplemented", err)
 	}
 }
 
@@ -65,5 +69,17 @@ func TestSubcommandsAreWired(t *testing.T) {
 		if !names[want] {
 			t.Errorf("subcommand %q not registered", want)
 		}
+	}
+}
+
+func TestEmbeddingMetadataRequiresDeclaredIndexedProviderForSemanticClaim(t *testing.T) {
+	if metadata := embeddingMetadata(embed.ProviderVoyage, ""); metadata.SemanticallyMeaningful {
+		t.Fatal("undeclared corpus provider must not be presented as semantic evidence")
+	}
+	if metadata := embeddingMetadata(embed.ProviderVoyage, embed.ProviderVoyage); !metadata.SemanticallyMeaningful {
+		t.Fatal("matching declared Voyage provider should be semantic")
+	}
+	if metadata := embeddingMetadata(embed.ProviderFake, embed.ProviderFake); metadata.SemanticallyMeaningful {
+		t.Fatal("fake provider must never be semantic")
 	}
 }
