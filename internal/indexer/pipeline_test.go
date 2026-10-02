@@ -31,3 +31,13 @@ func TestRequireSidecarModel(t *testing.T) {
 		t.Fatalf("requireSidecarModel() = %v, want nil", err)
 	}
 }
+
+func TestVoyageProvenanceRecordsDocumentPrompt(t *testing.T) {
+	provider, model := embeddingProvenance(embed.Config{Provider: embed.ProviderVoyage})
+	if got, want := provider, string(embed.ProviderVoyage); got != want {
+		t.Errorf("provider = %q, want %q", got, want)
+	}
+	if got, want := model, "voyage-code-3;input_type=document"; got != want {
+		t.Errorf("model = %q, want %q", got, want)
+	}
+}

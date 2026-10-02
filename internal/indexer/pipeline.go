@@ -351,7 +351,7 @@ func requireSidecarModel(cfg embed.Config) error {
 func embeddingProvenance(cfg embed.Config) (provider, model string) {
 	switch cfg.Provider {
 	case embed.ProviderVoyage:
-		return string(cfg.Provider), firstNonEmpty(cfg.Voyage.Model, embed.DefaultVoyageModel)
+		return string(cfg.Provider), firstNonEmpty(cfg.Voyage.Model, embed.DefaultVoyageModel) + ";input_type=document"
 	case embed.ProviderSidecar:
 		return string(cfg.Provider), firstNonEmpty(cfg.Sidecar.Model, cfg.Sidecar.Endpoint, "unknown")
 	case embed.ProviderFake:

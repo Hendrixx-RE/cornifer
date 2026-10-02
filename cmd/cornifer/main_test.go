@@ -115,3 +115,32 @@ func TestEmbedderConfigForRepoRejectsUnidentifiedOrChangedSidecar(t *testing.T) 
 		t.Fatalf("embedderConfigForRepo() = %v, want nil", err)
 	}
 }
+
+func TestEmbedderConfigForRepoUsesVoyageQueryPrompt(t *testing.T) {
+	repo := &model.Repo{
+		EmbeddingProvider: string(embed.ProviderVoyage),
+		EmbeddingModel:    "voyage-code-3;input_type=document",
+	}
+	cfg, err := embedderConfigForRepo(repo, "")
+	if err != nil {
+		t.Fatalf("embedderConfigForRepo() = %v, want nil", err)
+	}
+	if got, want := cfg.Voyage.InputType, "query"; got != want {
+		t.Errorf("Voyage.InputType = %q, want %q", got, want)
+	}
+}
+
+func TestVoyageMetadataRecordsBothRetrievalRoles(t *testing.T) {
+	metadata := embeddingMetadataForRepo(
+		embed.ProviderVoyage,
+		embed.ProviderVoyage,
+		"voyage-code-3;input_type=document",
+		"",
+	)
+	if got, want := metadata.IndexedModel, "voyage-code-3;input_type=document"; got != want {
+		t.Errorf("IndexedModel = %q, want %q", got, want)
+	}
+	if got, want := metadata.QueryModel, "voyage-code-3;input_type=query"; got != want {
+		t.Errorf("QueryModel = %q, want %q", got, want)
+	}
+}

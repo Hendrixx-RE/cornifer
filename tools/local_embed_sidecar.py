@@ -38,6 +38,8 @@ MODEL_DIMENSION = 768
 # to 8,192) deliberately, and /metadata records the exact value used.
 MAX_LENGTH = int(os.environ.get("CORNIFER_SIDECAR_MAX_LENGTH", "512"))
 MAX_REQUEST_BATCH = int(os.environ.get("CORNIFER_SIDECAR_BATCH_SIZE", "8"))
+TORCH_THREADS = int(os.environ.get("CORNIFER_SIDECAR_TORCH_THREADS", "0"))
+TORCH_INTEROP_THREADS = int(os.environ.get("CORNIFER_SIDECAR_TORCH_INTEROP_THREADS", "0"))
 HOST = os.environ.get("CORNIFER_SIDECAR_HOST", "127.0.0.1")
 PORT = int(os.environ.get("CORNIFER_SIDECAR_PORT", "18080"))
 HF_HOME = os.environ.get("HF_HOME")
@@ -46,8 +48,15 @@ if MAX_LENGTH <= 0 or MAX_LENGTH > 8192:
     raise SystemExit("CORNIFER_SIDECAR_MAX_LENGTH must be in 1..8192")
 if MAX_REQUEST_BATCH <= 0:
     raise SystemExit("CORNIFER_SIDECAR_BATCH_SIZE must be positive")
+if TORCH_THREADS < 0 or TORCH_INTEROP_THREADS < 0:
+    raise SystemExit("CORNIFER_SIDECAR_TORCH_THREADS and CORNIFER_SIDECAR_TORCH_INTEROP_THREADS must be non-negative")
 if HOST not in {"127.0.0.1", "::1", "localhost"}:
     raise SystemExit("refusing a non-loopback CORNIFER_SIDECAR_HOST")
+
+if TORCH_THREADS:
+    torch.set_num_threads(TORCH_THREADS)
+if TORCH_INTEROP_THREADS:
+    torch.set_num_interop_threads(TORCH_INTEROP_THREADS)
 
 print(f"loading {MODEL_ID}@{MODEL_REVISION} on CPU (max_length={MAX_LENGTH})", flush=True)
 MODEL = AutoModel.from_pretrained(
@@ -106,6 +115,8 @@ class Handler(BaseHTTPRequestHandler):
                 "query_document_contract": "symmetric encode; no instruction prefix",
                 "max_length": MAX_LENGTH,
                 "max_request_batch": MAX_REQUEST_BATCH,
+                "torch_threads": torch.get_num_threads(),
+                "torch_interop_threads": torch.get_num_interop_threads(),
             },
         )
 

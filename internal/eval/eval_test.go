@@ -12,7 +12,7 @@ import (
 	"github.com/Hendrixx-RE/cornifer/internal/model"
 )
 
-func TestLoadPinnedDatasetAndVerifySourceLabels(t *testing.T) {
+func TestLoadPinnedDatasetAndVerifyLabelProvenance(t *testing.T) {
 	root := filepath.Join("..", "..")
 	dataset, err := Load(filepath.Join(root, "eval", "queries.yaml"))
 	if err != nil {
@@ -21,10 +21,19 @@ func TestLoadPinnedDatasetAndVerifySourceLabels(t *testing.T) {
 	if got := len(dataset.Queries); got < 20 {
 		t.Fatalf("query count = %d, want at least 20", got)
 	}
+	var source, ide int
 	for _, query := range dataset.Queries {
-		if query.Verification != VerificationSource {
-			t.Errorf("query %s verification = %q, want source", query.ID, query.Verification)
+		switch query.Verification {
+		case VerificationSource:
+			source++
+		case VerificationIDE:
+			ide++
+		default:
+			t.Errorf("query %s verification = %q, want source or ide", query.ID, query.Verification)
 		}
+	}
+	if source != 15 || ide != 7 {
+		t.Errorf("label provenance = source:%d ide:%d, want source:15 ide:7", source, ide)
 	}
 	// The checkout is deliberately optional in ordinary unit-test runs. The
 	// committed labels are still parsed and validated above; a source checkout

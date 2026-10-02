@@ -115,7 +115,7 @@ func storeDeps(ctx context.Context) (mcp.Deps, func(), error) {
 		if os.Getenv(embed.VoyageAPIKeyEnvVar) == "" {
 			log.Printf("vector search disabled: repo %d uses Voyage but %s is not set", repoID, embed.VoyageAPIKeyEnvVar)
 		} else {
-			emb, err = embed.New(embed.Config{Provider: provider})
+			emb, err = embed.New(embed.Config{Provider: provider, Voyage: embed.VoyageConfig{InputType: "query"}})
 		}
 	case embed.ProviderSidecar:
 		sidecarCfg := embed.ConfigFromEnvironment(embed.Config{Provider: provider})

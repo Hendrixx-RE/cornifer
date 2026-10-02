@@ -17,8 +17,12 @@ CPU run used `max_length=128`; the raw report records this exact identity for
 both index and query. It ran against an isolated PostgreSQL 16.6 / pgvector
 0.8.1 database. Index time was 47.175s, including 46.426s of embedding.
 
-All labels are source-verified direct spans at the pinned commit: 7
-structural, 7 semantic, and 8 identifier. There are zero IDE-verified labels.
+This historical 128-token raw report has 22 source-verified labels because it
+predates the subsequent independent LSP check. The current dataset preserves
+that artifact unchanged but has seven structural labels verified with Pyright
+1.1.412 definition/reference results at the same pinned commit; the 15
+semantic/identifier labels remain source-verified. See
+[`eval/verification/fastapi-pyright-lsp-40e33e492.json`](../eval/verification/fastapi-pyright-lsp-40e33e492.json).
 
 | System | P@5 | R@5 | MRR |
 | --- | ---: | ---: | ---: |
@@ -59,7 +63,12 @@ structural, 7 semantic, and 8 identifier. There are zero IDE-verified labels.
   language and dotted identifiers here. Its low score is a baseline result,
   not evidence that source search is generally ineffective.
 
-The next comparable evaluation should retain the same labels and model
-revision, raise the documented model cap to 512 on adequate CPU/GPU capacity,
-and separately index the complete checkout. It should also add actual
-Pyright/Pylance reference captures before any label is called IDE-verified.
+The next comparable evaluation should retain the same labels and separately
+index the complete checkout with the user-selected hosted provider. For the
+planned Voyage configuration, create a fresh 1024-dimensional pgvector
+database, index with `voyage-code-3;input_type=document`, and evaluate with
+`voyage-code-3;input_type=query`; preserve a new raw report rather than
+rewriting this historical 768-dimensional local result. No further local-model
+run is needed for that comparison. The structural labels already have actual
+Pyright LSP captures; dynamic call-resolution differences remain outside their
+scope.

@@ -96,6 +96,10 @@ type VoyageConfig struct {
 	// DefaultVoyageModel.
 	Model string
 
+	// InputType selects Voyage's retrieval prompt. Empty means "document" for
+	// indexing; query/eval/MCP callers explicitly select "query".
+	InputType string
+
 	// BaseURL is the embeddings endpoint. Empty means DefaultVoyageBaseURL.
 	BaseURL string
 

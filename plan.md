@@ -163,10 +163,11 @@ cornifer/
   - structural (find references / callers / blast radius) — ground truth verified with IDE "find references" (Pyright/Pylance) on the pinned commit;
   - semantic / vocabulary-mismatch (e.g. "rate limiting"-style intent queries);
   - exact-identifier lookups (where grep should do well — be honest).
-- [x] The committed set has 22 source-grounded FastAPI queries at
+- [x] The committed set has 22 grounded FastAPI queries at
   `40e33e492dbf4af6172997f4e3238a32e56cbe26` (7 structural, 7 semantic,
-  8 identifier). It contains **no IDE-verified labels**: source inspection is
-  explicitly recorded instead of fabricating Pyright/Pylance checks.
+  8 identifier). Pyright 1.1.412 independently verified the seven structural
+  declaration labels through LSP definition/references; the remaining 15 stay
+  explicitly source-verified.
 - [x] `cornifer eval` runs graph-boosted hybrid, hybrid without graph boost,
   BM25-only, vector-only, and ripgrep. Raw output describes the graph stage
   and preserves both rankings for a meaningful ablation.

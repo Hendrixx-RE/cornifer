@@ -30,11 +30,11 @@ claim about a full 1,306-file FastAPI checkout.
 
 The committed [evaluation set](eval/queries.yaml) contains **22 FastAPI
 queries** at pinned commit `40e33e492dbf4af6172997f4e3238a32e56cbe26`:
-7 structural, 7 semantic, and 8 identifier tasks. Every current label is
-marked **source-verified** and points to a source span that `cornifer eval`
-checks against the pinned checkout. There are **zero IDE-verified labels** in
-this first set: no Pylance/Pyright "find references" result is asserted or
-inferred.
+7 structural, 7 semantic, and 8 identifier tasks. The seven structural labels
+are **IDE-verified** by Pyright 1.1.412 LSP definition and reference requests;
+the durable [verification evidence](eval/verification/fastapi-pyright-lsp-40e33e492.json)
+records every returned target. The other 15 labels remain **source-verified**
+and are not presented as IDE checks.
 
 The raw [real result](eval/results/fastapi-40e33e492db-jina-code-source-128.json)
 uses `jinaai/jina-embeddings-v2-base-code` revision
@@ -60,8 +60,13 @@ make migrate       # apply schema migrations
 make fetch-repo     # clone the pinned target repo (see TARGET_REPO) into repos/
 make test           # go test ./... (no database required; DB-backed tests skip cleanly)
 
-go run ./cmd/cornifer index --repo repos/fastapi         # build the index (defaults to the fake embedder without VOYAGE_API_KEY)
-go run ./cmd/cornifer query "rate limiting" --repo repos/fastapi
+# Preferred semantic path: set the secret only in your shell/environment.
+# voyage-code-3 uses 1024-d float vectors; migrate with that dimension first.
+export VOYAGE_API_KEY='…' # never commit this value
+# Use a new/empty database migrated at 1024 dimensions. Existing 768-d
+# sidecar databases cannot hold Voyage's 1024-d vectors.
+go run ./cmd/cornifer index --repo repos/fastapi --embed-provider voyage
+go run ./cmd/cornifer query "rate limiting" --repo repos/fastapi --embed-provider voyage
 go run ./cmd/cornifer find-definition fastapi.routing.APIRoute
 go run ./cmd/cornifer callers fastapi.applications.FastAPI.add_api_route
 go run ./cmd/cornifer blast-radius fastapi/routing.py
@@ -116,13 +121,36 @@ entry points:
 |---|---|---|
 | `CORNIFER_DATABASE_URL` | `postgres://cornifer:cornifer@localhost:5433/cornifer?sslmode=disable` | Postgres connection string used by every command |
 | `CORNIFER_EMBEDDING_DIM` | `1024` (`model.DefaultEmbeddingDim`) | Dimension of the `chunks.embedding` pgvector column, read at migration time |
-| `VOYAGE_API_KEY` | unset | If set, `index`/`query` default to the real Voyage `voyage-code-3` embedder; otherwise they default to a deterministic, network-free fake so the pipeline runs anywhere. Override explicitly with `--embed-provider voyage\|sidecar\|fake` |
+| `VOYAGE_API_KEY` | unset | Preferred hosted semantic provider: enables Voyage `voyage-code-3` (1024-d float vectors). Indexing sends `input_type=document`; query/eval/MCP search send `input_type=query`. Use `--embed-provider voyage` explicitly; without a key the safe default is fake. |
 | `CORNIFER_SIDECAR_ENDPOINT` | unset | Required `/embed` endpoint when `--embed-provider sidecar` is used |
 | `CORNIFER_SIDECAR_MODEL` | unset | Required immutable sidecar model identity (include revision and contract); persisted with the snapshot and checked by query/eval/MCP |
 | `CORNIFER_SIDECAR_BATCH_SIZE` | `8` for sidecars | Bounds a sidecar request; `tools/local_embed_sidecar.py` uses the same value for its CPU model batch |
 | `CORNIFER_SIDECAR_TIMEOUT_SECONDS` | `60` | Optional sidecar-only HTTP deadline; set it for a slow CPU model without changing hosted-provider timeouts |
 | `--cache-dir` | `.cornifer-cache/` | Where the persisted BM25 index is written/read; structural data stays in Postgres |
 | `--max-embed-tokens` | `8000` | Per-chunk embedding-input token ceiling; oversized chunks (plan.md's "one FastAPI chunk is ~50K tokens" case) are truncated for embedding, with a warning, not skipped |
+
+### Hosted Voyage setup
+
+Hosted Voyage is the preferred path for a new semantic benchmark; Cornifer does
+not make API calls until an index/query/eval command is run. Supply only these
+values through the calling environment (never a file committed to this repo):
+
+```sh
+export CORNIFER_DATABASE_URL='postgres://USER:PASSWORD@HOST:PORT/DATABASE?sslmode=require'
+export CORNIFER_EMBEDDING_DIM=1024
+export VOYAGE_API_KEY='user-provided Voyage API key'
+make migrate
+go run ./cmd/cornifer index --repo repos/fastapi --embed-provider voyage
+go run ./cmd/cornifer eval --repo repos/fastapi --embed-provider voyage
+```
+
+Use an empty database (or a database whose `chunks.embedding` migration was
+created at 1024 dimensions) for Voyage. Do not reuse the historical local-Jina
+database, whose pgvector column is 768-dimensional. Cornifer persists
+`voyage-code-3;input_type=document` for indexed chunks and sends
+`input_type=query` for query/eval/MCP requests; a hosted report will record
+both roles. `voyage-code-3` is intentionally pinned by the plan; selecting a
+different paid model requires an explicit user choice and a clean reindex.
 
 ## Evaluation methodology
 
@@ -142,8 +170,8 @@ deduplicates labelled source spans, and MRR uses the first relevant result.
 The default fake provider is useful for an offline pipeline check only. Its
 hash-derived vectors are explicitly tagged `semantically_meaningful: false`
 in results, so any vector/hybrid number from it is not evidence of semantic
-retrieval quality. Use Voyage or a correctly configured local sidecar for a
-semantic comparison, and preserve the resulting raw JSON under
+retrieval quality. Prefer user-authorized Voyage for a semantic comparison;
+the local sidecar is an optional offline fallback. Preserve the resulting raw JSON under
 `eval/results/`.
 
 Embedding provider/model are persisted on each indexed repository snapshot.
@@ -166,22 +194,24 @@ override for snapshots indexed before migration 00010.
 - **The fake embedder is not semantically meaningful.** Without
   `VOYAGE_API_KEY`, vector-search results are deterministic but
   hash-derived, not based on code meaning; BM25 still works normally. Set
-  `VOYAGE_API_KEY` (or point `--embed-provider sidecar` at a local model)
-  to see real semantic recall.
+  `VOYAGE_API_KEY` and select `--embed-provider voyage` to see hosted
+  semantic recall. The local sidecar remains optional and was used only for
+  the recorded offline experiment.
 - **Graph boosting is heuristic.** Graph-adjacent/same-file chunks receive a
   small configurable post-RRF score (`--graph-boost-weight`, default
   `0.002`). The real source-package run records both rankings: boosting raised
   recall@5 (0.864 vs. 0.818) but reduced MRR (0.642 vs. 0.678). It is an
   observed tradeoff on this corpus, not a general performance claim.
-- **The FastAPI ground truth is source-verified, not IDE-verified.** The
-  committed labels are direct pinned-source targets. A future structural
-  evaluation pass should independently record Pyright/Pylance reference
-  checks, with tooling/version and the exact source commit, rather than
-  relabelling these existing entries.
+- **IDE verification is deliberately narrow.** Pyright 1.1.412 confirmed the
+  seven structural declaration labels in
+  `eval/verification/fastapi-pyright-lsp-40e33e492.json`; semantic and
+  identifier labels remain source-verified. This does not establish complete
+  Python call resolution, which is still heuristic and tracked separately.
 - **The committed result is source-package scoped.** All 22 labels fall under
   `fastapi/`, but the benchmark excludes FastAPI's tests and examples. A full
-  1,306-file checkout with this CPU-only Jina setup at a 512-token model cap
-  was not completed; it must not be compared directly with this result.
+  1,306-file checkout local-Jina run was intentionally stopped before it
+  produced chunks or results when hosted embeddings became the preferred path;
+  it must not be compared directly with this result.
 - **CPU sidecar truncation is material.** Jina's card documents support up to
   8,192 positions and training at 512; this resource-bounded run uses 128.
   One oversized `FastAPI.__init__` chunk was still truncated by Cornifer's
@@ -189,9 +219,9 @@ override for snapshots indexed before migration 00010.
 
 ## Remaining plan gaps
 
-The remaining required work is an independently recorded IDE-verified
-structural label pass and a clearly separated full-checkout benchmark on
-adequate local compute. Incremental updates, graph boosting/ablation,
+The remaining required work is a user-authorized full-checkout benchmark with
+a selected hosted embedding account. The structural labels now have a recorded
+Pyright LSP verification pass. Incremental updates, graph boosting/ablation,
 persisted embedding provenance, a real source-package result, and all seven
 MCP tools are implemented. Optional REST and reranking remain intentionally
 out of scope.

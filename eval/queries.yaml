@@ -1,6 +1,7 @@
 # Labels are tied to FastAPI 0.115.0 at the commit below. Every label in this
-# first set was checked by directly reading that pinned source span; none is
-# represented as IDE/Pylance "find references" ground truth.
+# labels were checked by directly reading their pinned source span. The seven
+# structural declaration labels additionally have independent Pyright LSP
+# definition/reference evidence; remaining labels are source-verified.
 version: 1
 target:
   repository: fastapi/fastapi
@@ -9,8 +10,8 @@ queries:
   - id: structural-route-delegation
     type: structural
     query: Where does FastAPI forward route registration to its router?
-    verification: source
-    evidence: fastapi/applications.py:1056 (pinned source inspected)
+    verification: ide
+    evidence: fastapi/applications.py:1056 (pinned source inspected; Pyright LSP 1.1.412 definition/references, report eval/verification/fastapi-pyright-lsp-40e33e492.json)
     relevant:
       - path: fastapi/applications.py
         start_line: 1056
@@ -19,8 +20,8 @@ queries:
   - id: structural-route-construction
     type: structural
     query: Which router method constructs APIRoute instances for a path operation?
-    verification: source
-    evidence: fastapi/routing.py:879 (pinned source inspected)
+    verification: ide
+    evidence: fastapi/routing.py:879 (pinned source inspected; Pyright LSP 1.1.412 definition/references, report eval/verification/fastapi-pyright-lsp-40e33e492.json)
     relevant:
       - path: fastapi/routing.py
         start_line: 879
@@ -29,8 +30,8 @@ queries:
   - id: structural-router-inclusion
     type: structural
     query: Where are included routers merged with prefixes and tags?
-    verification: source
-    evidence: fastapi/routing.py:1120 (pinned source inspected)
+    verification: ide
+    evidence: fastapi/routing.py:1120 (pinned source inspected; Pyright LSP 1.1.412 definition/references, report eval/verification/fastapi-pyright-lsp-40e33e492.json)
     relevant:
       - path: fastapi/routing.py
         start_line: 1120
@@ -39,8 +40,8 @@ queries:
   - id: structural-request-handler
     type: structural
     query: Which function creates the endpoint callable that solves dependencies?
-    verification: source
-    evidence: fastapi/routing.py:217 (pinned source inspected)
+    verification: ide
+    evidence: fastapi/routing.py:217 (pinned source inspected; Pyright LSP 1.1.412 definition/references, report eval/verification/fastapi-pyright-lsp-40e33e492.json)
     relevant:
       - path: fastapi/routing.py
         start_line: 217
@@ -49,8 +50,8 @@ queries:
   - id: structural-response-serialization
     type: structural
     query: Where does route handling serialize values returned by an endpoint?
-    verification: source
-    evidence: fastapi/routing.py:143 (pinned source inspected)
+    verification: ide
+    evidence: fastapi/routing.py:143 (pinned source inspected; Pyright LSP 1.1.412 definition/references, report eval/verification/fastapi-pyright-lsp-40e33e492.json)
     relevant:
       - path: fastapi/routing.py
         start_line: 143
@@ -59,8 +60,8 @@ queries:
   - id: structural-dependant-building
     type: structural
     query: Where is a dependant built from an endpoint signature?
-    verification: source
-    evidence: fastapi/dependencies/utils.py:257 (pinned source inspected)
+    verification: ide
+    evidence: fastapi/dependencies/utils.py:257 (pinned source inspected; Pyright LSP 1.1.412 definition/references, report eval/verification/fastapi-pyright-lsp-40e33e492.json)
     relevant:
       - path: fastapi/dependencies/utils.py
         start_line: 257
@@ -69,8 +70,8 @@ queries:
   - id: structural-dependency-solving
     type: structural
     query: Where are dependency values solved before a request endpoint runs?
-    verification: source
-    evidence: fastapi/dependencies/utils.py:562 (pinned source inspected)
+    verification: ide
+    evidence: fastapi/dependencies/utils.py:562 (pinned source inspected; Pyright LSP 1.1.412 definition/references, report eval/verification/fastapi-pyright-lsp-40e33e492.json)
     relevant:
       - path: fastapi/dependencies/utils.py
         start_line: 562

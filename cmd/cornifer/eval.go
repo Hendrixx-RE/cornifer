@@ -141,12 +141,12 @@ func embeddingMetadataForRepo(provider, indexedProvider embed.Provider, indexedM
 	switch provider {
 	case embed.ProviderVoyage:
 		if indexedModel == "" || indexedModel == "unknown" {
-			indexedModel = embed.DefaultVoyageModel
+			indexedModel = embed.DefaultVoyageModel + ";input_type=document"
 		}
 		if indexedProvider != "" && indexedSource != "assumed equal to query provider; index manifest does not record it" {
 			indexedSource, providerDeclared = "persisted with indexed repo", true
 		}
-		return cornefval.EmbeddingMetadata{QueryProvider: string(provider), QueryModel: embed.DefaultVoyageModel, IndexedProvider: string(indexedProvider), IndexedModel: indexedModel, IndexProviderSource: indexedSource, SemanticallyMeaningful: providerDeclared}
+		return cornefval.EmbeddingMetadata{QueryProvider: string(provider), QueryModel: embed.DefaultVoyageModel + ";input_type=query", IndexedProvider: string(indexedProvider), IndexedModel: indexedModel, IndexProviderSource: indexedSource, SemanticallyMeaningful: providerDeclared}
 	case embed.ProviderSidecar:
 		if queryModel == "" {
 			queryModel = "sidecar model not declared"

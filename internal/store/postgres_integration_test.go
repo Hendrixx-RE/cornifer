@@ -621,7 +621,7 @@ func TestInsertSymbolsIsAtomic(t *testing.T) {
 }
 
 // TestHNSWRecallVsExactScan builds a small sample of random vectors, runs
-// VectorSearch (which goes through the HNSW index per migration
+// VectorSearchByRepo (which goes through the HNSW index per migration
 // 00007_add_chunks_embedding.go), and compares its top-K against an
 // exact, brute-force cosine-distance scan computed in Go. Per plan.md
 // ("Days 10-11: embeddings and ANN"), recall must be verified against an
@@ -658,9 +658,12 @@ func TestHNSWRecallVsExactScan(t *testing.T) {
 
 	query := randomUnitVector(rng, s.embeddingDim)
 
-	approx, err := s.VectorSearch(ctx, query, k)
+	// User-facing retrieval is repository scoped. Using the legacy global
+	// method here would allow chunks inserted by other integration tests into
+	// the shared disposable database to dilute the sample's recall.
+	approx, err := s.VectorSearchByRepo(ctx, repo.ID, query, k)
 	if err != nil {
-		t.Fatalf("VectorSearch() error = %v", err)
+		t.Fatalf("VectorSearchByRepo() error = %v", err)
 	}
 
 	type scored struct {

@@ -43,11 +43,42 @@ func TestVoyageClientSendsAuthAndBody(t *testing.T) {
 	if gotReq.Model != DefaultVoyageModel {
 		t.Errorf("Model = %q, want %q", gotReq.Model, DefaultVoyageModel)
 	}
+	if gotReq.InputType != "document" {
+		t.Errorf("InputType = %q, want document", gotReq.InputType)
+	}
 	if gotReq.OutputDimension != 4 {
 		t.Errorf("OutputDimension = %d, want 4", gotReq.OutputDimension)
 	}
 	if len(vecs) != 2 {
 		t.Fatalf("len(vecs) = %d, want 2", len(vecs))
+	}
+}
+
+func TestVoyageClientUsesQueryInputType(t *testing.T) {
+	var got voyageRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Fatal(err)
+		}
+		json.NewEncoder(w).Encode(voyageResponse{Data: []voyageEmbeddingData{{Index: 0, Embedding: []float32{1, 2}}}})
+	}))
+	defer srv.Close()
+	client, err := newVoyageClient(VoyageConfig{APIKey: "test-key", InputType: "query", BaseURL: srv.URL, HTTPClient: srv.Client()}, 2)
+	if err != nil {
+		t.Fatalf("newVoyageClient() err = %v", err)
+	}
+	if _, err := client.doEmbed(t.Context(), []string{"find route registration"}); err != nil {
+		t.Fatalf("doEmbed() err = %v", err)
+	}
+	if got.InputType != "query" {
+		t.Errorf("InputType = %q, want query", got.InputType)
+	}
+}
+
+func TestNewVoyageClientRejectsUnknownInputType(t *testing.T) {
+	_, err := newVoyageClient(VoyageConfig{APIKey: "test-key", InputType: "other"}, 2)
+	if err == nil {
+		t.Fatal("newVoyageClient() succeeded with unknown input type")
 	}
 }
 

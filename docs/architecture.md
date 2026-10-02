@@ -37,3 +37,9 @@ texts for CPU sidecars; `CORNIFER_SIDECAR_TIMEOUT_SECONDS` can extend only the
 local sidecar deadline without weakening hosted-provider timeouts. This avoids
 silently querying a different vector space or retrying a long CPU request as
 if it had failed.
+
+Voyage is the preferred hosted embedding route. The indexer records its chunk
+vectors as `input_type=document`; CLI query, evaluation, and MCP search use
+`input_type=query`, matching Voyage's retrieval contract. The provider/model
+and document-side input type are persisted with each snapshot, while raw eval
+metadata records the query-side input type separately.

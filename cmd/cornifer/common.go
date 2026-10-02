@@ -102,7 +102,13 @@ func embedderConfigForRepo(repo *model.Repo, requested embed.Provider) (embed.Co
 	if err != nil {
 		return embed.Config{}, err
 	}
-	cfg := embed.ConfigFromEnvironment(embed.Config{Provider: provider})
+	cfg := embed.Config{Provider: provider}
+	if provider == embed.ProviderVoyage {
+		// Voyage uses a retrieval-specific prompt for user queries. The indexer
+		// retains the provider default (document) while writing chunk vectors.
+		cfg.Voyage.InputType = "query"
+	}
+	cfg = embed.ConfigFromEnvironment(cfg)
 	if provider != embed.ProviderSidecar {
 		return cfg, nil
 	}
