@@ -13,11 +13,12 @@ import (
 )
 
 // Session bundles everything a read-only CLI command (query, find-definition,
-// callers, callees, blast-radius, cycles) needs for one already-indexed
-// repo: the live Store (for vector search and any future point lookups),
-// the cached Manifest (see cache.go), and a Graph built from it.
+// callers, callees, blast-radius, cycles) needs for one already-indexed repo.
+// Its in-memory Manifest-shaped snapshot is hydrated from Store at open time,
+// never from a stale JSON cache; the persisted cache is now BM25-only.
 type Session struct {
 	Store    store.Store
+	Repo     *model.Repo
 	Manifest *Manifest
 	Graph    *graph.Graph
 
@@ -26,10 +27,11 @@ type Session struct {
 	chunkByID  map[int64]ChunkMeta
 }
 
-// OpenSession resolves repoRoot's most recently indexed Repo (matching the
-// commit currently checked out there) via st.GetRepoByCommit, then loads its
-// Manifest from cacheDir and builds a Graph from it.
-func OpenSession(ctx context.Context, st store.Store, repoRoot, cacheDir string) (*Session, error) {
+// OpenSession resolves repoRoot's indexed snapshot matching its checked-out
+// commit, bulk-loads current structural/catalog rows from Store, and builds a
+// Graph. cacheDir is retained in the signature for callers that also load the
+// BM25 cache, but it is not used to source structural data.
+func OpenSession(ctx context.Context, st store.Store, repoRoot, _ string) (*Session, error) {
 	absRoot, err := absPath(repoRoot)
 	if err != nil {
 		return nil, err
@@ -44,25 +46,70 @@ func OpenSession(ctx context.Context, st store.Store, repoRoot, cacheDir string)
 		return nil, fmt.Errorf("indexer: no indexed repo found for %s @ %s (run `cornifer index` first): %w", absRoot, commitSHA, err)
 	}
 
-	dir, err := resolveCacheDir(cacheDir)
+	files, err := st.ListFiles(ctx, repo.ID)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("indexer: load files: %w", err)
 	}
-	manifest, err := LoadManifest(dir, repo.ID)
+	symbols, err := st.ListSymbols(ctx, repo.ID)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("indexer: load symbols: %w", err)
+	}
+	edges, err := st.LoadEdges(ctx, repo.ID)
+	if err != nil {
+		return nil, fmt.Errorf("indexer: load edges: %w", err)
+	}
+	chunks, err := st.ListChunks(ctx, repo.ID)
+	if err != nil {
+		return nil, fmt.Errorf("indexer: load chunks: %w", err)
+	}
+	manifest := &Manifest{RepoID: repo.ID, Root: repo.Root, CommitSHA: repo.CommitSHA, Files: files, Symbols: symbols, Edges: edges}
+	manifest.Chunks = make([]ChunkMeta, len(chunks))
+	for i, c := range chunks {
+		manifest.Chunks[i] = ChunkMeta{ID: c.ID, SymbolID: c.SymbolID, FileID: c.FileID, StartLine: c.StartLine, EndLine: c.EndLine, Text: c.Text, ContextHeader: c.ContextHeader, TokenCount: c.TokenCount}
 	}
 
-	g := graph.Build(manifest.Edges)
+	g := graph.Build(edges)
 
 	return &Session{
 		Store:      st,
+		Repo:       repo,
 		Manifest:   manifest,
 		Graph:      g,
 		symbolByID: manifest.BySymbolID(),
 		fileByID:   manifest.ByFileID(),
 		chunkByID:  manifest.ByChunkID(),
 	}, nil
+}
+
+// VectorSearcher scopes dense retrieval to this session's repository. The
+// Store's legacy VectorSearch remains useful for administrative callers, but
+// user-facing CLI/MCP paths must not return chunks from another snapshot.
+func (s *Session) VectorSearcher() retrieve.VectorSearcher {
+	return repoVectorSearcher{store: s.Store, repoID: s.Manifest.RepoID}
+}
+
+// GraphBoost returns a repo-scoped graph-adjacency boost stage. A
+// non-positive weight disables it, which is useful for evaluation ablations.
+func (s *Session) GraphBoost(weight float64) retrieve.BoostStage {
+	if weight <= 0 {
+		return nil
+	}
+	chunkSymbols := make(map[int64]*int64, len(s.Manifest.Chunks))
+	chunkFiles := make(map[int64]int64, len(s.Manifest.Chunks))
+	for _, chunk := range s.Manifest.Chunks {
+		chunkSymbols[chunk.ID] = chunk.SymbolID
+		chunkFiles[chunk.ID] = chunk.FileID
+	}
+	return retrieve.GraphBoost{Graph: s.Graph, ChunkSymbols: chunkSymbols, ChunkFiles: chunkFiles, Weight: weight}
+}
+
+type repoVectorSearcher struct {
+	store  store.Store
+	repoID int64
+}
+
+func (v repoVectorSearcher) VectorSearch(ctx context.Context, query []float32, limit int) ([]*model.Chunk, error) {
+	return v.store.VectorSearchByRepo(ctx, v.repoID, query, limit)
 }
 
 // Symbol looks up a symbol by its repo-unique ID.
@@ -99,7 +146,7 @@ func (s *Session) NewHybridSearcher(cacheDir string, embedder embed.Embedder, cf
 	if err != nil {
 		return nil, err
 	}
-	return retrieve.NewHybridSearcher(sparse, s.Store, embedder, cfg), nil
+	return retrieve.NewHybridSearcher(sparse, s.VectorSearcher(), embedder, cfg), nil
 }
 
 // LoadBM25 opens the persisted lexical index associated with this session.

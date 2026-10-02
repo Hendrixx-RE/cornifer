@@ -13,10 +13,11 @@ import (
 
 func newQueryCmd() *cobra.Command {
 	var (
-		limit         int
-		repoPath      string
-		embedProvider string
-		globals       globalFlags
+		limit            int
+		graphBoostWeight float64
+		repoPath         string
+		embedProvider    string
+		globals          globalFlags
 	)
 
 	cmd := &cobra.Command{
@@ -33,12 +34,16 @@ func newQueryCmd() *cobra.Command {
 			}
 			defer st.Close()
 
-			embedder, err := indexer.BuildEmbedder(embed.Config{Provider: embed.Provider(embedProvider)})
+			provider, err := embedderProviderForRepo(sess.Repo, embed.Provider(embedProvider))
+			if err != nil {
+				return err
+			}
+			embedder, err := indexer.BuildEmbedder(embed.Config{Provider: provider})
 			if err != nil {
 				return fmt.Errorf("build embedder: %w", err)
 			}
 
-			searcher, err := sess.NewHybridSearcher(globals.cacheDir, embedder, retrieve.Config{})
+			searcher, err := sess.NewHybridSearcher(globals.cacheDir, embedder, retrieve.Config{Boost: sess.GraphBoost(graphBoostWeight)})
 			if err != nil {
 				return err
 			}
@@ -85,6 +90,7 @@ func newQueryCmd() *cobra.Command {
 	addGlobalFlags(cmd, &globals)
 	embedderProviderFlag(cmd, &embedProvider)
 	cmd.Flags().IntVar(&limit, "limit", 10, "maximum number of results to return")
+	cmd.Flags().Float64Var(&graphBoostWeight, "graph-boost-weight", retrieve.DefaultGraphBoostWeight, "post-fusion graph adjacency boost (0 disables it)")
 
 	return cmd
 }

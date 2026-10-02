@@ -142,7 +142,7 @@ cornifer/
 
 **Days 13–14: hybrid fusion**
 - [ ] Reciprocal Rank Fusion: `score = Σ 1 / (k + rank_i)`, `k = 60`; parameterize.
-- [ ] Graph boosting: after fusion, boost hits that are graph-adjacent (callers/callees/same module) to other top-N hits; weight configurable.
+- [x] Graph boosting: after fusion, boost hits that are graph-adjacent (callers/callees/same module) to other top-N hits; weight configurable.
 - [ ] Optional cross-encoder rerank of the top ~50 (behind a flag; only keep it if the eval shows it helps).
 - [ ] Iterate against real queries; record what was tried in `docs/tuning.md`.
 
@@ -167,10 +167,9 @@ cornifer/
   `40e33e492dbf4af6172997f4e3238a32e56cbe26` (7 structural, 7 semantic,
   8 identifier). It contains **no IDE-verified labels**: source inspection is
   explicitly recorded instead of fabricating Pyright/Pylance checks.
-- [x] `cornifer eval` runs hybrid, BM25-only, vector-only, and ripgrep. It
-  would include hybrid-without-graph-boost only when a real boost is wired;
-  graph boosting is currently absent, so reports state that limitation rather
-  than emit a meaningless duplicate row.
+- [x] `cornifer eval` runs graph-boosted hybrid, hybrid without graph boost,
+  BM25-only, vector-only, and ripgrep. Raw output describes the graph stage
+  and preserves both rankings for a meaningful ablation.
 - [x] `cornifer eval` calculates precision@5, recall@5, and MRR overall and
   per query type, and writes reproducible raw JSON containing target/index
   SHA, label provenance, provider/model metadata, and exact top-five ranks.
@@ -181,8 +180,13 @@ cornifer/
   result exists (resolution heuristics vs. chunking vs. embeddings).
 
 **Days 20–21: polish**
-- [ ] Incremental reindex: diff `content_hash`, re-parse changed files, delete/reinsert their symbols/chunks, re-resolve edges touching them.
-- [ ] README: architecture diagram, quickstart, eval table, known limitations.
+- [x] Incremental reindex: diff `content_hash`, re-parse/rechunk/re-embed
+  added or changed files, delete removed files, and rebuild cross-file edges,
+  unresolved refs, and BM25 consistently. New commit SHAs intentionally stay
+  separate snapshots and still take a clean full index.
+- [x] README: architecture diagram, quickstart, known limitations, and a
+  reproducible command demo. A real eval table remains pending the database
+  and a cost-approved real embedding provider.
 - [ ] Short demo recording built around the four "grep can't" questions.
 
 ## Embedding bridge (Go-specific)

@@ -11,16 +11,18 @@ import (
 	"github.com/Hendrixx-RE/cornifer/internal/embed"
 	cornefval "github.com/Hendrixx-RE/cornifer/internal/eval"
 	"github.com/Hendrixx-RE/cornifer/internal/indexer"
+	"github.com/Hendrixx-RE/cornifer/internal/retrieve"
 )
 
 func newEvalCmd() *cobra.Command {
 	var (
-		queriesPath     string
-		outputPath      string
-		repoPath        string
-		embedProvider   string
-		indexedProvider string
-		globals         globalFlags
+		queriesPath      string
+		outputPath       string
+		repoPath         string
+		embedProvider    string
+		indexedProvider  string
+		graphBoostWeight float64
+		globals          globalFlags
 	)
 
 	cmd := &cobra.Command{
@@ -43,8 +45,15 @@ func newEvalCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			provider := resolvedEmbedProvider(embed.Provider(embedProvider))
+			provider, err := embedderProviderForRepo(sess.Repo, embed.Provider(embedProvider))
+			if err != nil {
+				return err
+			}
+			provider = resolvedEmbedProvider(provider)
 			indexProvider := embed.Provider(indexedProvider)
+			if sess.Repo.EmbeddingProvider != "" && sess.Repo.EmbeddingProvider != "unknown" {
+				indexProvider = embed.Provider(sess.Repo.EmbeddingProvider)
+			}
 			if indexProvider != "" && indexProvider != provider {
 				return fmt.Errorf("index embedding provider %q does not match query provider %q; vector retrieval requires the same embedding space", indexProvider, provider)
 			}
@@ -54,13 +63,15 @@ func newEvalCmd() *cobra.Command {
 			}
 
 			report, err := cornefval.Run(ctx, dataset, cornefval.Config{
-				RepoRoot:  sess.Manifest.Root,
-				CommitSHA: sess.Manifest.CommitSHA,
-				Manifest:  sess.Manifest,
-				Sparse:    sparse,
-				Vector:    st,
-				Embedder:  embedder,
-				Embedding: embeddingMetadata(provider, indexProvider),
+				RepoRoot:              sess.Manifest.Root,
+				CommitSHA:             sess.Manifest.CommitSHA,
+				Manifest:              sess.Manifest,
+				Sparse:                sparse,
+				Vector:                sess.VectorSearcher(),
+				Embedder:              embedder,
+				Embedding:             embeddingMetadataForRepo(provider, indexProvider, sess.Repo.EmbeddingModel),
+				GraphBoost:            sess.GraphBoost(graphBoostWeight),
+				GraphBoostDescription: fmt.Sprintf("repo-scoped one-hop graph adjacency and same-file boost; weight=%.6f", graphBoostWeight),
 			})
 			if err != nil {
 				return err
@@ -97,6 +108,7 @@ func newEvalCmd() *cobra.Command {
 	addGlobalFlags(cmd, &globals)
 	embedderProviderFlag(cmd, &embedProvider)
 	cmd.Flags().StringVar(&indexedProvider, "indexed-embed-provider", "", "provider used while indexing (must match --embed-provider when set; otherwise recorded as an unverified assumption)")
+	cmd.Flags().Float64Var(&graphBoostWeight, "graph-boost-weight", retrieve.DefaultGraphBoostWeight, "post-fusion graph adjacency boost (0 disables it and omits the ablation)")
 
 	return cmd
 }
@@ -112,6 +124,10 @@ func resolvedEmbedProvider(provider embed.Provider) embed.Provider {
 }
 
 func embeddingMetadata(provider, indexedProvider embed.Provider) cornefval.EmbeddingMetadata {
+	return embeddingMetadataForRepo(provider, indexedProvider, "")
+}
+
+func embeddingMetadataForRepo(provider, indexedProvider embed.Provider, indexedModel string) cornefval.EmbeddingMetadata {
 	indexedSource := "declared with --indexed-embed-provider"
 	providerDeclared := indexedProvider != ""
 	if indexedProvider == "" {
@@ -123,9 +139,21 @@ func embeddingMetadata(provider, indexedProvider embed.Provider) cornefval.Embed
 	}
 	switch provider {
 	case embed.ProviderVoyage:
-		return cornefval.EmbeddingMetadata{QueryProvider: string(provider), QueryModel: embed.DefaultVoyageModel, IndexedProvider: string(indexedProvider), IndexedModel: embed.DefaultVoyageModel, IndexProviderSource: indexedSource, SemanticallyMeaningful: providerDeclared}
+		if indexedModel == "" || indexedModel == "unknown" {
+			indexedModel = embed.DefaultVoyageModel
+		}
+		if indexedProvider != "" && indexedSource != "assumed equal to query provider; index manifest does not record it" {
+			indexedSource, providerDeclared = "persisted with indexed repo", true
+		}
+		return cornefval.EmbeddingMetadata{QueryProvider: string(provider), QueryModel: embed.DefaultVoyageModel, IndexedProvider: string(indexedProvider), IndexedModel: indexedModel, IndexProviderSource: indexedSource, SemanticallyMeaningful: providerDeclared}
 	case embed.ProviderSidecar:
-		return cornefval.EmbeddingMetadata{QueryProvider: string(provider), QueryModel: "sidecar model (provider does not report a model id)", IndexedProvider: string(indexedProvider), IndexedModel: "sidecar model (provider does not report a model id)", IndexProviderSource: indexedSource, SemanticallyMeaningful: providerDeclared}
+		if indexedModel == "" || indexedModel == "unknown" {
+			indexedModel = "sidecar model (provider does not report a model id)"
+		}
+		if indexedProvider != "" && indexedSource != "assumed equal to query provider; index manifest does not record it" {
+			indexedSource, providerDeclared = "persisted with indexed repo", true
+		}
+		return cornefval.EmbeddingMetadata{QueryProvider: string(provider), QueryModel: "sidecar model (provider does not report a model id)", IndexedProvider: string(indexedProvider), IndexedModel: indexedModel, IndexProviderSource: indexedSource, SemanticallyMeaningful: providerDeclared}
 	default:
 		return cornefval.EmbeddingMetadata{QueryProvider: string(provider), QueryModel: "deterministic hash-derived fake", IndexedProvider: string(indexedProvider), IndexedModel: "deterministic hash-derived fake", IndexProviderSource: indexedSource, SemanticallyMeaningful: false}
 	}

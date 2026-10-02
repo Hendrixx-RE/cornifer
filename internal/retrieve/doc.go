@@ -9,10 +9,7 @@
 // expressed as the narrow VectorSearcher interface (see hybrid.go), which
 // internal/store's Store satisfies without an adapter, so this package
 // builds and tests independently of the store package's development.
-// Graph-adjacency boosting and optional cross-encoder rerank are out of
-// scope for this wave (plan.md marks rerank optional/eval-gated, and graph
-// boosting depends on internal/graph, built in parallel); BoostStage is the
-// seam a future graph-aware boost stage plugs into, and NoBoost is the
-// default no-op until one is wired in by the caller (internal/mcp or the
-// CLI).
+// GraphBoost is the built-in, configurable graph-adjacency post-fusion stage;
+// callers supply repo-scoped chunk metadata and graph rows. Cross-encoder
+// reranking remains optional and out of scope.
 package retrieve

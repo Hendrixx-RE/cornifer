@@ -203,4 +203,48 @@ func TestEndToEndFixtureRepo(t *testing.T) {
 	if _, err := os.Stat(results); err != nil {
 		t.Errorf("eval results not written: %v", err)
 	}
+
+	// Incremental reindex: change foo, add a cross-file caller, then delete
+	// it. The fixture is not a git checkout, so its stable pseudo-SHA lets
+	// this exercise the same-snapshot content-hash path directly.
+	mustWrite(t, filepath.Join(repoRoot, "foo.py"), `"""Foo module: a greeter."""
+
+
+class Greeter:
+    def greet(self, name):
+        return f"hello {name}"
+
+
+def make_greeter():
+    return Greeter()
+
+
+def farewell(name):
+    return f"bye {name}"
+`)
+	mustWrite(t, filepath.Join(repoRoot, "baz.py"), `from foo import farewell
+
+
+def run():
+    return farewell("world")
+`)
+	out, err = runCLI(t, "reindex", "--repo", repoRoot, "--cache-dir", cacheDir, "--embed-provider", "fake")
+	if err != nil {
+		t.Fatalf("incremental reindex add/change: %v\noutput:\n%s", err, out)
+	}
+	out, err = runCLI(t, "callers", "foo.farewell", "--repo", repoRoot, "--cache-dir", cacheDir)
+	if err != nil || !strings.Contains(out, "baz.run") {
+		t.Fatalf("callers after incremental add/change: err=%v output=%s", err, out)
+	}
+	if err := os.Remove(filepath.Join(repoRoot, "baz.py")); err != nil {
+		t.Fatalf("delete added file: %v", err)
+	}
+	out, err = runCLI(t, "reindex", "--repo", repoRoot, "--cache-dir", cacheDir, "--embed-provider", "fake")
+	if err != nil {
+		t.Fatalf("incremental reindex delete: %v\noutput:\n%s", err, out)
+	}
+	out, err = runCLI(t, "find-definition", "baz.run", "--repo", repoRoot, "--cache-dir", cacheDir)
+	if err != nil || !strings.Contains(out, "no definition found") {
+		t.Fatalf("find deleted definition: err=%v output=%s", err, out)
+	}
 }

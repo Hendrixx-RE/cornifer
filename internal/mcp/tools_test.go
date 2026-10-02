@@ -513,6 +513,27 @@ func TestServerOverTransport(t *testing.T) {
 		}
 	}
 
+	// Every registered tool is invoked over the transport with a valid,
+	// bounded request. This is the protocol-level smoke test complementary to
+	// the direct handler tests above.
+	for _, call := range []struct {
+		name string
+		args map[string]any
+	}{
+		{"search_code", map[string]any{"query": "anything"}},
+		{"find_definition", map[string]any{"symbol": "pkg.a"}},
+		{"find_references", map[string]any{"symbol": "pkg.a"}},
+		{"get_dependencies", map[string]any{"symbol": "pkg.a"}},
+		{"get_call_graph", map[string]any{"symbol": "pkg.a"}},
+		{"get_blast_radius", map[string]any{"symbol": "pkg.a"}},
+		{"find_cycles", map[string]any{}},
+	} {
+		res, err := cs.CallTool(ctx, &sdk.CallToolParams{Name: call.name, Arguments: call.args})
+		if err != nil || res.IsError {
+			t.Fatalf("%s transport call: err=%v result=%+v", call.name, err, res)
+		}
+	}
+
 	res, err := cs.CallTool(ctx, &sdk.CallToolParams{Name: "find_cycles", Arguments: map[string]any{}})
 	if err != nil || res.IsError {
 		t.Fatalf("find_cycles: %v %+v", err, res)

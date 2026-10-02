@@ -327,6 +327,48 @@ func TestGetByIDLookups(t *testing.T) {
 	}
 }
 
+func TestRepoProvenanceBulkCatalogAndScopedVectorSearch(t *testing.T) {
+	s := connectOrSkip(t)
+	ctx := context.Background()
+	repoA := newTestRepo(t, s, ctx)
+	repoB := newTestRepo(t, s, ctx)
+	if err := s.UpdateRepoEmbeddingProvenance(ctx, repoA.ID, "fake", "deterministic-hash-derived"); err != nil {
+		t.Fatal(err)
+	}
+	gotRepo, err := s.GetRepoByID(ctx, repoA.ID)
+	if err != nil || gotRepo.EmbeddingProvider != "fake" || gotRepo.EmbeddingModel != "deterministic-hash-derived" {
+		t.Fatalf("GetRepoByID provenance = %+v, err=%v", gotRepo, err)
+	}
+
+	vector := make([]float32, s.embeddingDim)
+	vector[0] = 1
+	for _, repo := range []*model.Repo{repoA, repoB} {
+		file := &model.File{RepoID: repo.ID, Path: "pkg/mod.py", Language: "python", ContentHash: "h", ModuleName: "pkg.mod"}
+		if err := s.UpsertFiles(ctx, []*model.File{file}); err != nil {
+			t.Fatal(err)
+		}
+		sym := &model.Symbol{FileID: file.ID, Kind: model.SymbolKindFunction, Name: "f", QualifiedName: "pkg.mod.f", StartLine: 1, EndLine: 2}
+		if err := s.InsertSymbols(ctx, []*model.Symbol{sym}); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.InsertChunks(ctx, []*model.Chunk{{FileID: file.ID, SymbolID: &sym.ID, Text: "def f(): pass", TokenCount: 3, StartLine: 1, EndLine: 2, Embedding: vector}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	syms, err := s.ListSymbols(ctx, repoA.ID)
+	if err != nil || len(syms) != 1 {
+		t.Fatalf("ListSymbols(repoA) = %+v, err=%v", syms, err)
+	}
+	chunks, err := s.ListChunks(ctx, repoA.ID)
+	if err != nil || len(chunks) != 1 || chunks[0].Embedding != nil {
+		t.Fatalf("ListChunks(repoA) = %+v, err=%v; want one metadata-only chunk", chunks, err)
+	}
+	results, err := s.VectorSearchByRepo(ctx, repoA.ID, vector, 5)
+	if err != nil || len(results) != 1 || results[0].FileID != chunks[0].FileID {
+		t.Fatalf("VectorSearchByRepo(repoA) = %+v, err=%v", results, err)
+	}
+}
+
 // TestChunkLinesRoundTrip verifies StartLine/EndLine survive InsertChunks →
 // VectorSearch (migrations/00009_add_chunk_lines.sql).
 func TestChunkLinesRoundTrip(t *testing.T) {

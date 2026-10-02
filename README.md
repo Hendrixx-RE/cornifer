@@ -11,12 +11,12 @@ design decisions.
 
 ## Status
 
-**Week 1 and Week 2 exit criteria are met end to end.** `cornifer index`
+**The core indexing, retrieval, MCP, and evaluation paths are implemented.** `cornifer index`
 runs the full pipeline (walk → parse → symbols → resolve → chunk → embed →
 store → BM25) against a real repo; `cornifer query`, `find-definition`,
 `callers`, `callees`, `blast-radius`, and `cycles` answer structural and
 hybrid-semantic questions against the result. **Week 3 evaluation is now
-implemented:** `cornifer eval` validates pinned YAML labels, runs hybrid,
+implemented:** `cornifer eval` validates pinned YAML labels, runs graph-boosted hybrid and its no-boost ablation, BM25-only, vector-only, and ripgrep,
 BM25-only, vector-only, and ripgrep, calculates precision@5 / recall@5 / MRR
 overall and by query type, and writes the raw ranks and metadata to JSON.
 
@@ -58,16 +58,34 @@ go run ./cmd/cornifer find-definition fastapi.routing.APIRoute
 go run ./cmd/cornifer callers fastapi.applications.FastAPI.add_api_route
 go run ./cmd/cornifer blast-radius fastapi/routing.py
 go run ./cmd/cornifer cycles --repo repos/fastapi
+go run ./cmd/cornifer reindex --repo repos/fastapi # content-hash incremental update
 
 # After index has completed against the same cache/database:
-go run ./cmd/cornifer eval --repo repos/fastapi --embed-provider voyage --indexed-embed-provider voyage
+go run ./cmd/cornifer eval --repo repos/fastapi
 # writes eval/results/fastapi-40e33e492db-voyage.json by default
 ```
 
 Every read command (`query`, `find-definition`, `callers`, `callees`,
 `blast-radius`, `cycles`) needs `cornifer index` to have run first for that
-repo — see "Known limitations" below for why (a local cache, not just
-Postgres, currently backs these reads).
+repo. Structural/catalog data is reloaded directly from Postgres for the
+matching commit; only the BM25 index is a local cache.
+
+## Architecture
+
+```text
+Python repo ──> walker / tree-sitter ──> symbols + resolver ──> Postgres
+                      │                       │                 │
+                      └──> AST chunks ──> embeddings ───────────┤
+                                              │                  │
+                                    persisted BM25 cache          │
+                                                                 ▼
+CLI / MCP ──> repo-scoped Store snapshot ──> BM25 + vector ──> RRF
+                                                        │          │
+                                                        └─ graph boost
+```
+
+See [docs/architecture.md](docs/architecture.md) for storage boundaries,
+provenance, and incremental-update behavior.
 
 ## Layout
 
@@ -91,7 +109,7 @@ entry points:
 | `CORNIFER_DATABASE_URL` | `postgres://cornifer:cornifer@localhost:5433/cornifer?sslmode=disable` | Postgres connection string used by every command |
 | `CORNIFER_EMBEDDING_DIM` | `1024` (`model.DefaultEmbeddingDim`) | Dimension of the `chunks.embedding` pgvector column, read at migration time |
 | `VOYAGE_API_KEY` | unset | If set, `index`/`query` default to the real Voyage `voyage-code-3` embedder; otherwise they default to a deterministic, network-free fake so the pipeline runs anywhere. Override explicitly with `--embed-provider voyage\|sidecar\|fake` |
-| `--cache-dir` | `.cornifer-cache/` | Where the local manifest + BM25 index (see "Known limitations") are written/read |
+| `--cache-dir` | `.cornifer-cache/` | Where the persisted BM25 index is written/read; structural data stays in Postgres |
 | `--max-embed-tokens` | `8000` | Per-chunk embedding-input token ceiling; oversized chunks (plan.md's "one FastAPI chunk is ~50K tokens" case) are truncated for embedding, with a warning, not skipped |
 
 ## Evaluation methodology
@@ -116,31 +134,20 @@ retrieval quality. Use Voyage or a correctly configured local sidecar for a
 semantic comparison, and preserve the resulting raw JSON under
 `eval/results/`.
 
-Current index manifests do not persist the corpus embedding provider. Pass
-`--indexed-embed-provider` when evaluating a real index; it must match the
-query provider. If omitted, the report defaults it to the query provider but
-marks that value as an unverified assumption rather than observed provenance,
-and will not mark vector/hybrid rows semantically meaningful.
+Embedding provider/model are persisted on each indexed repository snapshot.
+`query`, `eval`, and MCP use that provenance to avoid mixing vector spaces;
+an explicit incompatible `--embed-provider` fails rather than producing a
+plausible but invalid ranking. `--indexed-embed-provider` remains a legacy
+override for snapshots indexed before migration 00010.
 
 ## Known limitations
 
-- **No bulk Store reads yet.** `internal/store`'s `Store` interface (this
-  wave) has point lookups (`FindSymbolByQualifiedName`,
-  `FindSymbolsByName`, `GetCallers`/`GetCallees` by one ID) but no
-  "every symbol/edge/chunk in this repo" query. `cornifer index` works
-  around this by additionally writing a JSON manifest (files, symbols,
-  edges, and chunk metadata) under `--cache-dir`, which every read command
-  loads instead of querying Postgres for graph/structural data (vector
-  search still goes through `Store.VectorSearch`). This means read
-  commands only work against a repo that has been indexed by the same
-  machine/cache-dir since the last `index` run. See
-  `internal/indexer/doc.go` for the exact plan to drop this once bulk Store
-  methods land.
-- **`reindex` is a full rebuild, not an incremental diff.** It reuses the
-  existing `Repo` row for an unchanged commit but re-walks, re-parses, and
-  re-resolves everything (skipping the run entirely unless `--force` is
-  given, or the commit changed); the `content_hash`-diff incremental path
-  plan.md describes for Week 3 is not yet implemented.
+- **Incremental indexing is snapshot-local.** For an already-indexed
+  root+commit, `reindex` compares content hashes and only re-parses,
+  re-chunks, and re-embeds added/changed files; it deletes removed files and
+  re-resolves the complete graph for correctness. A new commit remains a new
+  immutable snapshot and currently takes the clean full-index path rather
+  than copying unchanged rows across snapshots.
 - **Call/import resolution is heuristic**, not type inference — see
   `internal/resolve/doc.go`. `cornifer index` logs per-kind resolution
   ratios every run.
@@ -149,11 +156,10 @@ and will not mark vector/hybrid rows semantically meaningful.
   hash-derived, not based on code meaning; BM25 still works normally. Set
   `VOYAGE_API_KEY` (or point `--embed-provider sidecar` at a local model)
   to see real semantic recall.
-- **Graph-adjacency boosting is not implemented.** The retrieval API exposes
-  a post-fusion boost seam, but production wiring supplies the no-op default.
-  Therefore an eval report records graph boost as unavailable and does not
-  fabricate a redundant "hybrid without graph boost" row. Add a real graph
-  boost before making that comparison.
+- **Graph boosting is heuristic.** Graph-adjacent/same-file chunks receive a
+  small configurable post-RRF score (`--graph-boost-weight`, default
+  `0.002`). Evaluation records both full hybrid and no-boost rankings, but
+  no target-repo conclusion is claimed until a real embedding run is stored.
 - **The FastAPI ground truth is source-verified, not IDE-verified.** The
   committed labels are direct pinned-source targets. A future structural
   evaluation pass should independently record Pyright/Pylance reference
@@ -166,10 +172,11 @@ and will not mark vector/hybrid rows semantically meaningful.
 
 ## Remaining plan gaps
 
-The Week 3 evaluation milestone is available, but the following plan items
-remain incomplete: graph boost (and its ablation), IDE-verified structural
-ground truth, a checked-in real-embedding FastAPI result, genuinely
-incremental reindexing, the optional REST layer, and the demo recording.
+The remaining required work is a checked-in real-embedding FastAPI result and
+source-grounded failure analysis, plus independently recorded IDE-verified
+structural labels. Incremental updates, graph boosting/ablation, persisted
+embedding provenance, and all seven MCP tools are implemented. Optional REST
+and reranking remain intentionally out of scope.
 
 ## Target repo
 

@@ -20,18 +20,16 @@ import (
 )
 
 // Index runs the full indexing pipeline against cfg.RepoRoot and persists
-// its output to st (Postgres) plus a local Manifest and BM25 index under
-// cfg.CacheDir (see doc.go for why the latter exist).
+// its output to st (Postgres) plus a local BM25 index under cfg.CacheDir.
 //
 // If root+commitSHA was already indexed (store.GetRepoByCommit finds it),
 // Index reuses that Repo row and first deletes its existing files — which,
 // per files.doc "ON DELETE CASCADE", cascades to their symbols, edges,
 // unresolved_refs, and chunks — so re-running index (or `reindex --force`)
 // against an unchanged commit is a clean full rebuild rather than a unique-
-// constraint error or duplicated rows. This is a full rebuild, not the
-// file-level incremental diff plan.md describes for Week 3 (see reindex.go);
-// a genuinely new commit still gets its own fresh Repo row, per plan.md:
-// "Re-indexing the same root at a different commit creates a new Repo row".
+// constraint error or duplicated rows. IncrementalIndex is the content-hash
+// path for an existing snapshot; a genuinely new commit still gets its own
+// fresh Repo row to preserve snapshot attribution.
 func Index(ctx context.Context, st store.Store, cfg Config) (*Stats, error) {
 	stats := newStats()
 	doneTotal := stats.track("total")
@@ -46,7 +44,9 @@ func Index(ctx context.Context, st store.Store, cfg Config) (*Stats, error) {
 		return nil, fmt.Errorf("indexer: resolve commit sha: %w", err)
 	}
 
-	repoID, err := getOrCreateCleanRepo(ctx, st, absRoot, commitSHA)
+	embedCfg := resolvedEmbedConfig(cfg.Embedder)
+	provider, embeddingModel := embeddingProvenance(embedCfg)
+	repoID, err := getOrCreateCleanRepo(ctx, st, absRoot, commitSHA, provider, embeddingModel)
 	if err != nil {
 		return nil, err
 	}
@@ -175,7 +175,7 @@ func Index(ctx context.Context, st store.Store, cfg Config) (*Stats, error) {
 
 	// Embed
 
-	embedder, err := BuildEmbedder(cfg.Embedder)
+	embedder, err := BuildEmbedder(embedCfg)
 	if err != nil {
 		return nil, fmt.Errorf("indexer: build embedder: %w", err)
 	}
@@ -249,40 +249,16 @@ func Index(ctx context.Context, st store.Store, cfg Config) (*Stats, error) {
 	}
 	doneBM25()
 
-	// Manifest
-
-	manifest := &Manifest{
-		RepoID:    repoID,
-		Root:      absRoot,
-		CommitSHA: commitSHA,
-		Files:     files,
-		Edges:     resolved.Edges,
-	}
-	for _, syms := range perFile {
-		manifest.Symbols = append(manifest.Symbols, syms...)
-	}
-	manifest.Chunks = make([]ChunkMeta, len(allChunks))
-	for i, c := range allChunks {
-		manifest.Chunks[i] = ChunkMeta{
-			ID: c.ID, SymbolID: c.SymbolID, FileID: c.FileID,
-			StartLine: c.StartLine, EndLine: c.EndLine,
-			Text: c.Text, ContextHeader: c.ContextHeader, TokenCount: c.TokenCount,
-		}
-	}
-	if err := SaveManifest(cacheDir, manifest); err != nil {
-		return nil, err
-	}
-
 	return stats, nil
 }
 
 // getOrCreateCleanRepo returns a Repo ID for root+commitSHA with no
 // existing files: a freshly created row, or an existing one wiped clean of
 // its prior files (see Index's doc comment).
-func getOrCreateCleanRepo(ctx context.Context, st store.Store, root, commitSHA string) (int64, error) {
+func getOrCreateCleanRepo(ctx context.Context, st store.Store, root, commitSHA, provider, embeddingModel string) (int64, error) {
 	existing, err := st.GetRepoByCommit(ctx, root, commitSHA)
 	if errors.Is(err, store.ErrNotFound) {
-		repo := &model.Repo{Root: root, CommitSHA: commitSHA}
+		repo := &model.Repo{Root: root, CommitSHA: commitSHA, EmbeddingProvider: provider, EmbeddingModel: embeddingModel}
 		repoID, err := st.CreateRepo(ctx, repo)
 		if err != nil {
 			return 0, fmt.Errorf("indexer: create repo: %w", err)
@@ -291,6 +267,9 @@ func getOrCreateCleanRepo(ctx context.Context, st store.Store, root, commitSHA s
 	}
 	if err != nil {
 		return 0, fmt.Errorf("indexer: look up existing repo: %w", err)
+	}
+	if err := st.UpdateRepoEmbeddingProvenance(ctx, existing.ID, provider, embeddingModel); err != nil {
+		return 0, err
 	}
 
 	oldFiles, err := st.ListFiles(ctx, existing.ID)
@@ -341,6 +320,10 @@ func absPath(root string) (string, error) {
 // that needs an Embedder (index, reindex, query) resolves the default the
 // same way.
 func BuildEmbedder(cfg embed.Config) (embed.Embedder, error) {
+	return embed.New(resolvedEmbedConfig(cfg))
+}
+
+func resolvedEmbedConfig(cfg embed.Config) embed.Config {
 	if cfg.Provider == "" {
 		if os.Getenv(embed.VoyageAPIKeyEnvVar) != "" {
 			cfg.Provider = embed.ProviderVoyage
@@ -348,7 +331,29 @@ func BuildEmbedder(cfg embed.Config) (embed.Embedder, error) {
 			cfg.Provider = embed.ProviderFake
 		}
 	}
-	return embed.New(cfg)
+	return cfg
+}
+
+func embeddingProvenance(cfg embed.Config) (provider, model string) {
+	switch cfg.Provider {
+	case embed.ProviderVoyage:
+		return string(cfg.Provider), firstNonEmpty(cfg.Voyage.Model, embed.DefaultVoyageModel)
+	case embed.ProviderSidecar:
+		return string(cfg.Provider), firstNonEmpty(cfg.Sidecar.Model, cfg.Sidecar.Endpoint, "unknown")
+	case embed.ProviderFake:
+		return string(cfg.Provider), "deterministic-hash-derived"
+	default:
+		return "unknown", "unknown"
+	}
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 // truncateToTokens cuts s down to approximately maxTok tokens by
