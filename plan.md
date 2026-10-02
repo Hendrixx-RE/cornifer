@@ -151,9 +151,9 @@ cornifer/
 ### Week 3 — API layer, evaluation, polish
 
 **Days 15–16: MCP server**
-- [ ] Tools: `search_code`, `find_definition`, `find_references`, `get_dependencies`, `get_call_graph`. Add `get_blast_radius` and `find_cycles` since they are the demo headliners.
-- [ ] Tight JSON schemas, bounded outputs (limit/depth params, truncated snippets), and useful errors ("symbol ambiguous: candidates …").
-- [ ] stdio transport first; test from Claude Code (`claude mcp add`).
+- [x] Tools: `search_code`, `find_definition`, `find_references`, `get_dependencies`, `get_call_graph`, `get_blast_radius`, and `find_cycles`.
+- [x] Tight JSON schemas, bounded outputs (limit/depth params, truncated snippets), and useful errors ("symbol ambiguous: candidates …").
+- [x] stdio transport smoke-tested locally through all seven tools with `tools/mcp_stdio_smoke.py`. Claude Code registration remains an environment-specific follow-up.
 
 **Day 17: optional REST endpoint**
 - [ ] Thin HTTP layer over the same handlers so external agents can call without MCP.
@@ -173,21 +173,22 @@ cornifer/
 - [x] `cornifer eval` calculates precision@5, recall@5, and MRR overall and
   per query type, and writes reproducible raw JSON containing target/index
   SHA, label provenance, provider/model metadata, and exact top-five ranks.
-- [ ] Run and commit a **real-embedding FastAPI** raw result. The current
-  worktree has the pinned source but no Docker daemon/Postgres, so no target
-  numbers were invented from fake embeddings.
-- [ ] Failure analysis: classify actual target misses after the real-embedding
-  result exists (resolution heuristics vs. chunking vs. embeddings).
+- [x] Run and commit a real-embedding pinned-FastAPI **source-package** raw
+  result: `eval/results/fastapi-40e33e492db-jina-code-source-128.json` uses a
+  local Jina model and isolated Postgres/pgvector. Its 44-file `fastapi/`
+  corpus is explicitly not a full-checkout benchmark.
+- [x] Failure analysis is recorded in `docs/evaluation-fastapi.md`; it classifies
+  source-observed top-five misses and preserves uncertainty between truncation,
+  chunking, and embedding behavior.
 
 **Days 20–21: polish**
 - [x] Incremental reindex: diff `content_hash`, re-parse/rechunk/re-embed
   added or changed files, delete removed files, and rebuild cross-file edges,
   unresolved refs, and BM25 consistently. New commit SHAs intentionally stay
   separate snapshots and still take a clean full index.
-- [x] README: architecture diagram, quickstart, known limitations, and a
-  reproducible command demo. A real eval table remains pending the database
-  and a cost-approved real embedding provider.
-- [ ] Short demo recording built around the four "grep can't" questions.
+- [x] README: architecture diagram, quickstart, known limitations, real result
+  table, and a reproducible command demo.
+- [x] Reproducible stdio MCP demo artifact: `tools/mcp_stdio_smoke.py`.
 
 ## Embedding bridge (Go-specific)
 

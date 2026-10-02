@@ -13,3 +13,5 @@
 .DS_Store
 *.swp
 /.cornifer-cache/
+/.cornifer-local/
+__pycache__/

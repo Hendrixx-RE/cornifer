@@ -45,6 +45,9 @@ func Index(ctx context.Context, st store.Store, cfg Config) (*Stats, error) {
 	}
 
 	embedCfg := resolvedEmbedConfig(cfg.Embedder)
+	if err := requireSidecarModel(embedCfg); err != nil {
+		return nil, err
+	}
 	provider, embeddingModel := embeddingProvenance(embedCfg)
 	repoID, err := getOrCreateCleanRepo(ctx, st, absRoot, commitSHA, provider, embeddingModel)
 	if err != nil {
@@ -331,7 +334,18 @@ func resolvedEmbedConfig(cfg embed.Config) embed.Config {
 			cfg.Provider = embed.ProviderFake
 		}
 	}
-	return cfg
+	return embed.ConfigFromEnvironment(cfg)
+}
+
+// requireSidecarModel prevents a mutable endpoint address from being recorded
+// as though it were a reproducible embedding-model identity. The low-level
+// embed package still permits an anonymous sidecar for library callers and
+// tests; indexing is the durable provenance boundary and must be stricter.
+func requireSidecarModel(cfg embed.Config) error {
+	if cfg.Provider == embed.ProviderSidecar && cfg.Sidecar.Model == "" {
+		return fmt.Errorf("indexer: sidecar indexing requires %s to name the model and revision", embed.SidecarModelEnvVar)
+	}
+	return nil
 }
 
 func embeddingProvenance(cfg embed.Config) (provider, model string) {

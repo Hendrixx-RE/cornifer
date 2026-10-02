@@ -38,6 +38,9 @@ func New(cfg Config) (Embedder, error) {
 	batchSize := cfg.BatchSize
 	if batchSize <= 0 {
 		batchSize = DefaultBatchSize
+		if cfg.Provider == ProviderSidecar {
+			batchSize = DefaultSidecarBatchSize
+		}
 	}
 	maxRetries := cfg.MaxRetries
 	if maxRetries <= 0 {

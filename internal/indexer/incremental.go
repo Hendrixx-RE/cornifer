@@ -50,9 +50,15 @@ func IncrementalIndex(ctx context.Context, st store.Store, cfg Config) (*Stats, 
 	stats.RepoID, stats.Root, stats.CommitSHA = repo.ID, root, commitSHA
 
 	embedCfg := resolvedEmbedConfig(cfg.Embedder)
+	if err := requireSidecarModel(embedCfg); err != nil {
+		return nil, err
+	}
 	provider, embeddingModel := embeddingProvenance(embedCfg)
 	if repo.EmbeddingProvider != "" && repo.EmbeddingProvider != "unknown" && repo.EmbeddingProvider != provider {
 		return nil, fmt.Errorf("indexer: existing repo uses embedding provider %q, requested %q; use `cornifer index` for a clean re-embed", repo.EmbeddingProvider, provider)
+	}
+	if repo.EmbeddingModel != "" && repo.EmbeddingModel != "unknown" && repo.EmbeddingModel != embeddingModel {
+		return nil, fmt.Errorf("indexer: existing repo uses embedding model %q, requested %q; use `cornifer index` for a clean re-embed", repo.EmbeddingModel, embeddingModel)
 	}
 	if err := st.UpdateRepoEmbeddingProvenance(ctx, repo.ID, provider, embeddingModel); err != nil {
 		return nil, err

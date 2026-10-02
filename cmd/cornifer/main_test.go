@@ -83,3 +83,35 @@ func TestEmbeddingMetadataRequiresDeclaredIndexedProviderForSemanticClaim(t *tes
 		t.Fatal("fake provider must never be semantic")
 	}
 }
+
+func TestSidecarEmbeddingMetadataNamesTheConfiguredModel(t *testing.T) {
+	metadata := embeddingMetadataForRepo(
+		embed.ProviderSidecar,
+		embed.ProviderSidecar,
+		"jinaai/jina-embeddings-v2-base-code@516f4baf",
+		"jinaai/jina-embeddings-v2-base-code@516f4baf",
+	)
+	if metadata.QueryModel != "jinaai/jina-embeddings-v2-base-code@516f4baf" {
+		t.Errorf("QueryModel = %q, want configured immutable model identity", metadata.QueryModel)
+	}
+	if !metadata.SemanticallyMeaningful {
+		t.Fatal("matching persisted sidecar provider must be reported as semantically meaningful")
+	}
+}
+
+func TestEmbedderConfigForRepoRejectsUnidentifiedOrChangedSidecar(t *testing.T) {
+	repo := &model.Repo{EmbeddingProvider: string(embed.ProviderSidecar), EmbeddingModel: "model@one"}
+	t.Setenv(embed.SidecarEndpointEnvVar, "http://127.0.0.1:18080/embed")
+	t.Setenv(embed.SidecarModelEnvVar, "")
+	if _, err := embedderConfigForRepo(repo, ""); err == nil {
+		t.Fatal("embedderConfigForRepo() succeeded without a sidecar model identity")
+	}
+	t.Setenv(embed.SidecarModelEnvVar, "model@two")
+	if _, err := embedderConfigForRepo(repo, ""); err == nil {
+		t.Fatal("embedderConfigForRepo() accepted a changed sidecar model")
+	}
+	t.Setenv(embed.SidecarModelEnvVar, "model@one")
+	if _, err := embedderConfigForRepo(repo, ""); err != nil {
+		t.Fatalf("embedderConfigForRepo() = %v, want nil", err)
+	}
+}

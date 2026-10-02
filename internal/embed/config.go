@@ -2,6 +2,8 @@ package embed
 
 import (
 	"net/http"
+	"os"
+	"strconv"
 	"time"
 )
 
@@ -22,11 +24,15 @@ const (
 
 // Defaults used when the corresponding Config field is zero.
 const (
-	DefaultBatchSize   = 128
-	DefaultMaxRetries  = 5
-	DefaultRetryBase   = 500 * time.Millisecond
-	DefaultRetryMax    = 30 * time.Second
-	DefaultHTTPTimeout = 60 * time.Second
+	DefaultBatchSize = 128
+	// DefaultSidecarBatchSize keeps a CPU-hosted local model within the
+	// default HTTP deadline. Hosted providers accept the larger generic
+	// DefaultBatchSize, but a sidecar commonly subdivides work internally.
+	DefaultSidecarBatchSize = 8
+	DefaultMaxRetries       = 5
+	DefaultRetryBase        = 500 * time.Millisecond
+	DefaultRetryMax         = 30 * time.Second
+	DefaultHTTPTimeout      = 60 * time.Second
 
 	DefaultVoyageModel   = "voyage-code-3"
 	DefaultVoyageBaseURL = "https://api.voyageai.com/v1/embeddings"
@@ -34,6 +40,21 @@ const (
 	// VoyageAPIKeyEnvVar is the environment variable the Voyage client reads
 	// its API key from when Config.Voyage.APIKey is empty.
 	VoyageAPIKeyEnvVar = "VOYAGE_API_KEY"
+
+	// SidecarEndpointEnvVar and SidecarModelEnvVar configure a local embedding
+	// sidecar for CLI/MCP callers. Keeping the model identifier separate from
+	// the endpoint lets indexed snapshots record a reproducible vector-space
+	// identity (including a model revision), rather than merely an address.
+	SidecarEndpointEnvVar = "CORNIFER_SIDECAR_ENDPOINT"
+	SidecarModelEnvVar    = "CORNIFER_SIDECAR_MODEL"
+	// SidecarBatchSizeEnvVar controls both Cornifer's request size and, for
+	// tools/local_embed_sidecar.py, the model's inner CPU batch size. It is
+	// intentionally sidecar-specific so hosted-provider batching is unchanged.
+	SidecarBatchSizeEnvVar = "CORNIFER_SIDECAR_BATCH_SIZE"
+	// SidecarTimeoutSecondsEnvVar optionally extends the HTTP deadline for a
+	// CPU-hosted sidecar. The ordinary 60-second default remains appropriate
+	// for hosted providers and small local requests.
+	SidecarTimeoutSecondsEnvVar = "CORNIFER_SIDECAR_TIMEOUT_SECONDS"
 )
 
 // Config selects and configures the Embedder built by New.
@@ -96,4 +117,32 @@ type SidecarConfig struct {
 	Model string
 
 	HTTPClient *http.Client
+}
+
+// ConfigFromEnvironment fills only missing sidecar settings from the process
+// environment. Callers that provide Config fields explicitly retain those
+// values, which keeps tests and embedded use independent of ambient config.
+// It intentionally does not choose a provider; provider selection belongs to
+// the caller because the safe default remains the deterministic fake embedder.
+func ConfigFromEnvironment(cfg Config) Config {
+	if cfg.Provider != ProviderSidecar {
+		return cfg
+	}
+	if cfg.Sidecar.Endpoint == "" {
+		cfg.Sidecar.Endpoint = os.Getenv(SidecarEndpointEnvVar)
+	}
+	if cfg.Sidecar.Model == "" {
+		cfg.Sidecar.Model = os.Getenv(SidecarModelEnvVar)
+	}
+	if cfg.BatchSize == 0 {
+		if batchSize, err := strconv.Atoi(os.Getenv(SidecarBatchSizeEnvVar)); err == nil && batchSize > 0 {
+			cfg.BatchSize = batchSize
+		}
+	}
+	if cfg.Sidecar.HTTPClient == nil {
+		if seconds, err := strconv.Atoi(os.Getenv(SidecarTimeoutSecondsEnvVar)); err == nil && seconds > 0 {
+			cfg.Sidecar.HTTPClient = &http.Client{Timeout: time.Duration(seconds) * time.Second}
+		}
+	}
+	return cfg
 }

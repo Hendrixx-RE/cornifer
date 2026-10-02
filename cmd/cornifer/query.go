@@ -34,11 +34,11 @@ func newQueryCmd() *cobra.Command {
 			}
 			defer st.Close()
 
-			provider, err := embedderProviderForRepo(sess.Repo, embed.Provider(embedProvider))
+			embedCfg, err := embedderConfigForRepo(sess.Repo, embed.Provider(embedProvider))
 			if err != nil {
 				return err
 			}
-			embedder, err := indexer.BuildEmbedder(embed.Config{Provider: provider})
+			embedder, err := indexer.BuildEmbedder(embedCfg)
 			if err != nil {
 				return fmt.Errorf("build embedder: %w", err)
 			}

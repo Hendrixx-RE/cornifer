@@ -16,15 +16,15 @@ runs the full pipeline (walk → parse → symbols → resolve → chunk → emb
 store → BM25) against a real repo; `cornifer query`, `find-definition`,
 `callers`, `callees`, `blast-radius`, and `cycles` answer structural and
 hybrid-semantic questions against the result. **Week 3 evaluation is now
-implemented:** `cornifer eval` validates pinned YAML labels, runs graph-boosted hybrid and its no-boost ablation, BM25-only, vector-only, and ripgrep,
-BM25-only, vector-only, and ripgrep, calculates precision@5 / recall@5 / MRR
+implemented:** `cornifer eval` validates pinned YAML labels, runs graph-boosted hybrid and its no-boost ablation, BM25-only, vector-only, and ripgrep, calculates precision@5 / recall@5 / MRR
 overall and by query type, and writes the raw ranks and metadata to JSON.
 
-Indexing the pinned FastAPI checkout (1306 Python files, including its
-`tests/` and `docs_src/` trees) took **~12s wall-clock** on this machine —
-well inside the "under a few minutes" target — producing 9,846 symbols,
-7,535 edges, and 5,499 embedded chunks. See the PR description for the full
-numbers and spot-checked command output.
+The checked-in real result indexes the pinned FastAPI **`fastapi/` source
+package only** (44 Python files, 716 symbols, 524 edges, and 402 chunks), not
+tests or `docs_src/`. It used a local CPU sidecar with the real Jina code model
+and completed in 47.175s (46.426s embedding time). The corpus boundary is
+important: these numbers are a reproducible source-package benchmark, not a
+claim about a full 1,306-file FastAPI checkout.
 
 ### Evaluation status
 
@@ -36,13 +36,21 @@ checks against the pinned checkout. There are **zero IDE-verified labels** in
 this first set: no Pylance/Pyright "find references" result is asserted or
 inferred.
 
-There is intentionally no target-repo metric table committed yet. This
-worktree has the pinned FastAPI source but no reachable Docker daemon/Postgres,
-so a real FastAPI index and evaluation could not be run locally. Inventing
-metrics (especially from the deterministic fake embedder) would make the
-comparison misleading. The evaluator has an end-to-end fixture test that runs
-when Postgres is available; the target command below produces the durable raw
-result once its prerequisites are present.
+The raw [real result](eval/results/fastapi-40e33e492db-jina-code-source-128.json)
+uses `jinaai/jina-embeddings-v2-base-code` revision
+`516f4baf13dec4ddddda8631e019b5737c8bc250`, 768 dimensions, model mean
+pooling, cosine similarity, symmetric query/document encoding, and a 128-token
+input cap. It was run against an isolated local PostgreSQL 16.6 + pgvector
+0.8.1 database. See [the evaluation note](docs/evaluation-fastapi.md) for
+per-type metrics, the graph ablation, and failure analysis.
+
+| Retrieval system | P@5 | R@5 | MRR |
+| --- | ---: | ---: | ---: |
+| Hybrid with graph boost | 0.173 | 0.864 | 0.642 |
+| Hybrid without graph boost | 0.164 | 0.818 | 0.678 |
+| BM25 | 0.118 | 0.591 | 0.470 |
+| Vector | 0.173 | 0.864 | 0.600 |
+| Ripgrep | 0.018 | 0.091 | 0.061 |
 
 ## Quickstart
 
@@ -62,7 +70,7 @@ go run ./cmd/cornifer reindex --repo repos/fastapi # content-hash incremental up
 
 # After index has completed against the same cache/database:
 go run ./cmd/cornifer eval --repo repos/fastapi
-# writes eval/results/fastapi-40e33e492db-voyage.json by default
+# writes eval/results/fastapi-<commit>-<provider>.json by default
 ```
 
 Every read command (`query`, `find-definition`, `callers`, `callees`,
@@ -109,6 +117,10 @@ entry points:
 | `CORNIFER_DATABASE_URL` | `postgres://cornifer:cornifer@localhost:5433/cornifer?sslmode=disable` | Postgres connection string used by every command |
 | `CORNIFER_EMBEDDING_DIM` | `1024` (`model.DefaultEmbeddingDim`) | Dimension of the `chunks.embedding` pgvector column, read at migration time |
 | `VOYAGE_API_KEY` | unset | If set, `index`/`query` default to the real Voyage `voyage-code-3` embedder; otherwise they default to a deterministic, network-free fake so the pipeline runs anywhere. Override explicitly with `--embed-provider voyage\|sidecar\|fake` |
+| `CORNIFER_SIDECAR_ENDPOINT` | unset | Required `/embed` endpoint when `--embed-provider sidecar` is used |
+| `CORNIFER_SIDECAR_MODEL` | unset | Required immutable sidecar model identity (include revision and contract); persisted with the snapshot and checked by query/eval/MCP |
+| `CORNIFER_SIDECAR_BATCH_SIZE` | `8` for sidecars | Bounds a sidecar request; `tools/local_embed_sidecar.py` uses the same value for its CPU model batch |
+| `CORNIFER_SIDECAR_TIMEOUT_SECONDS` | `60` | Optional sidecar-only HTTP deadline; set it for a slow CPU model without changing hosted-provider timeouts |
 | `--cache-dir` | `.cornifer-cache/` | Where the persisted BM25 index is written/read; structural data stays in Postgres |
 | `--max-embed-tokens` | `8000` | Per-chunk embedding-input token ceiling; oversized chunks (plan.md's "one FastAPI chunk is ~50K tokens" case) are truncated for embedding, with a warning, not skipped |
 
@@ -158,25 +170,31 @@ override for snapshots indexed before migration 00010.
   to see real semantic recall.
 - **Graph boosting is heuristic.** Graph-adjacent/same-file chunks receive a
   small configurable post-RRF score (`--graph-boost-weight`, default
-  `0.002`). Evaluation records both full hybrid and no-boost rankings, but
-  no target-repo conclusion is claimed until a real embedding run is stored.
+  `0.002`). The real source-package run records both rankings: boosting raised
+  recall@5 (0.864 vs. 0.818) but reduced MRR (0.642 vs. 0.678). It is an
+  observed tradeoff on this corpus, not a general performance claim.
 - **The FastAPI ground truth is source-verified, not IDE-verified.** The
   committed labels are direct pinned-source targets. A future structural
   evaluation pass should independently record Pyright/Pylance reference
   checks, with tooling/version and the exact source commit, rather than
   relabelling these existing entries.
-- **A target evaluation needs a live indexed database and real embeddings.**
-  `cornifer eval` loads BM25 from the local cache and vectors from Postgres;
-  it cannot generate honest FastAPI metrics until `make up`, `make migrate`,
-  and `cornifer index` have succeeded for the same pinned checkout.
+- **The committed result is source-package scoped.** All 22 labels fall under
+  `fastapi/`, but the benchmark excludes FastAPI's tests and examples. A full
+  1,306-file checkout with this CPU-only Jina setup at a 512-token model cap
+  was not completed; it must not be compared directly with this result.
+- **CPU sidecar truncation is material.** Jina's card documents support up to
+  8,192 positions and training at 512; this resource-bounded run uses 128.
+  One oversized `FastAPI.__init__` chunk was still truncated by Cornifer's
+  8,000-token pre-embedding ceiling before the model cap.
 
 ## Remaining plan gaps
 
-The remaining required work is a checked-in real-embedding FastAPI result and
-source-grounded failure analysis, plus independently recorded IDE-verified
-structural labels. Incremental updates, graph boosting/ablation, persisted
-embedding provenance, and all seven MCP tools are implemented. Optional REST
-and reranking remain intentionally out of scope.
+The remaining required work is an independently recorded IDE-verified
+structural label pass and a clearly separated full-checkout benchmark on
+adequate local compute. Incremental updates, graph boosting/ablation,
+persisted embedding provenance, a real source-package result, and all seven
+MCP tools are implemented. Optional REST and reranking remain intentionally
+out of scope.
 
 ## Target repo
 

@@ -93,3 +93,24 @@ func embedderProviderForRepo(repo *model.Repo, requested embed.Provider) (embed.
 	}
 	return stored, nil
 }
+
+// embedderConfigForRepo resolves sidecar configuration and rejects a local
+// model that differs from the indexed snapshot. Provider equality alone is
+// insufficient for sidecars because one endpoint can serve many vector spaces.
+func embedderConfigForRepo(repo *model.Repo, requested embed.Provider) (embed.Config, error) {
+	provider, err := embedderProviderForRepo(repo, requested)
+	if err != nil {
+		return embed.Config{}, err
+	}
+	cfg := embed.ConfigFromEnvironment(embed.Config{Provider: provider})
+	if provider != embed.ProviderSidecar {
+		return cfg, nil
+	}
+	if cfg.Sidecar.Model == "" {
+		return embed.Config{}, fmt.Errorf("sidecar-indexed repo requires %s to name the running model and revision", embed.SidecarModelEnvVar)
+	}
+	if repo != nil && repo.EmbeddingModel != "" && repo.EmbeddingModel != "unknown" && repo.EmbeddingModel != cfg.Sidecar.Model {
+		return embed.Config{}, fmt.Errorf("indexed repo uses embedding model %q, configured sidecar declares %q; reindex before changing vector spaces", repo.EmbeddingModel, cfg.Sidecar.Model)
+	}
+	return cfg, nil
+}

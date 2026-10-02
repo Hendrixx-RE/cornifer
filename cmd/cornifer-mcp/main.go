@@ -9,7 +9,9 @@
 //	CORNIFER_REPO_ID       repo id to serve (default 1)
 //	CORNIFER_DATABASE_URL  Postgres DSN (default: docker-compose database)
 //	CORNIFER_BM25_INDEX    path to a saved bm25 index; enables lexical search
-//	VOYAGE_API_KEY         enables vector search (with CORNIFER_BM25_INDEX or alone)
+//	VOYAGE_API_KEY         enables Voyage vector search (with CORNIFER_BM25_INDEX or alone)
+//	CORNIFER_SIDECAR_ENDPOINT and CORNIFER_SIDECAR_MODEL enable a matching
+//	                      local-sidecar vector search for sidecar-indexed repos
 //
 // stdout carries the MCP protocol, so all logging goes to stderr.
 package main
@@ -116,7 +118,16 @@ func storeDeps(ctx context.Context) (mcp.Deps, func(), error) {
 			emb, err = embed.New(embed.Config{Provider: provider})
 		}
 	case embed.ProviderSidecar:
-		log.Printf("vector search disabled: repo %d uses a sidecar; configure a matching sidecar before serving", repoID)
+		sidecarCfg := embed.ConfigFromEnvironment(embed.Config{Provider: provider})
+		if sidecarCfg.Sidecar.Model == "" {
+			st.Close()
+			return mcp.Deps{}, nil, fmt.Errorf("repo %d uses a sidecar; %s must name the matching model and revision", repoID, embed.SidecarModelEnvVar)
+		}
+		if repo.EmbeddingModel != "" && repo.EmbeddingModel != "unknown" && repo.EmbeddingModel != sidecarCfg.Sidecar.Model {
+			st.Close()
+			return mcp.Deps{}, nil, fmt.Errorf("repo %d uses embedding model %q, but configured sidecar declares %q", repoID, repo.EmbeddingModel, sidecarCfg.Sidecar.Model)
+		}
+		emb, err = embed.New(sidecarCfg)
 	default:
 		log.Printf("vector search disabled: repo %d has unknown embedding provider %q", repoID, repo.EmbeddingProvider)
 	}
@@ -135,7 +146,7 @@ func storeDeps(ctx context.Context) (mcp.Deps, func(), error) {
 		}
 		deps.Search = retrieve.NewHybridSearcher(sparse, vector, emb, retrieve.Config{Boost: boost})
 	} else {
-		log.Print("search_code disabled: set CORNIFER_BM25_INDEX and/or VOYAGE_API_KEY")
+		log.Print("search_code disabled: set CORNIFER_BM25_INDEX, VOYAGE_API_KEY, or a matching CORNIFER_SIDECAR_ENDPOINT")
 	}
 	return deps, func() { st.Close() }, nil
 }

@@ -29,3 +29,11 @@ MCP exposes `search_code`, `find_definition`, `find_references`,
 `get_dependencies`, `get_call_graph`, `get_blast_radius`, and `find_cycles`.
 All outputs are bounded and hydrate source locations through Store catalog
 lookups.
+
+For sidecar-backed snapshots, `CORNIFER_SIDECAR_ENDPOINT` and an immutable
+`CORNIFER_SIDECAR_MODEL` identity are required at index time and checked at
+query/eval/MCP time. `CORNIFER_SIDECAR_BATCH_SIZE` defaults to a bounded eight
+texts for CPU sidecars; `CORNIFER_SIDECAR_TIMEOUT_SECONDS` can extend only the
+local sidecar deadline without weakening hosted-provider timeouts. This avoids
+silently querying a different vector space or retrying a long CPU request as
+if it had failed.

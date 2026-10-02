@@ -45,11 +45,12 @@ func newEvalCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			provider, err := embedderProviderForRepo(sess.Repo, embed.Provider(embedProvider))
+			embedCfg, err := embedderConfigForRepo(sess.Repo, embed.Provider(embedProvider))
 			if err != nil {
 				return err
 			}
-			provider = resolvedEmbedProvider(provider)
+			provider := resolvedEmbedProvider(embedCfg.Provider)
+			embedCfg.Provider = provider
 			indexProvider := embed.Provider(indexedProvider)
 			if sess.Repo.EmbeddingProvider != "" && sess.Repo.EmbeddingProvider != "unknown" {
 				indexProvider = embed.Provider(sess.Repo.EmbeddingProvider)
@@ -57,7 +58,7 @@ func newEvalCmd() *cobra.Command {
 			if indexProvider != "" && indexProvider != provider {
 				return fmt.Errorf("index embedding provider %q does not match query provider %q; vector retrieval requires the same embedding space", indexProvider, provider)
 			}
-			embedder, err := indexer.BuildEmbedder(embed.Config{Provider: provider})
+			embedder, err := indexer.BuildEmbedder(embedCfg)
 			if err != nil {
 				return fmt.Errorf("build embedder: %w", err)
 			}
@@ -69,7 +70,7 @@ func newEvalCmd() *cobra.Command {
 				Sparse:                sparse,
 				Vector:                sess.VectorSearcher(),
 				Embedder:              embedder,
-				Embedding:             embeddingMetadataForRepo(provider, indexProvider, sess.Repo.EmbeddingModel),
+				Embedding:             embeddingMetadataForRepo(provider, indexProvider, sess.Repo.EmbeddingModel, embedCfg.Sidecar.Model),
 				GraphBoost:            sess.GraphBoost(graphBoostWeight),
 				GraphBoostDescription: fmt.Sprintf("repo-scoped one-hop graph adjacency and same-file boost; weight=%.6f", graphBoostWeight),
 			})
@@ -124,10 +125,10 @@ func resolvedEmbedProvider(provider embed.Provider) embed.Provider {
 }
 
 func embeddingMetadata(provider, indexedProvider embed.Provider) cornefval.EmbeddingMetadata {
-	return embeddingMetadataForRepo(provider, indexedProvider, "")
+	return embeddingMetadataForRepo(provider, indexedProvider, "", "")
 }
 
-func embeddingMetadataForRepo(provider, indexedProvider embed.Provider, indexedModel string) cornefval.EmbeddingMetadata {
+func embeddingMetadataForRepo(provider, indexedProvider embed.Provider, indexedModel, queryModel string) cornefval.EmbeddingMetadata {
 	indexedSource := "declared with --indexed-embed-provider"
 	providerDeclared := indexedProvider != ""
 	if indexedProvider == "" {
@@ -147,13 +148,16 @@ func embeddingMetadataForRepo(provider, indexedProvider embed.Provider, indexedM
 		}
 		return cornefval.EmbeddingMetadata{QueryProvider: string(provider), QueryModel: embed.DefaultVoyageModel, IndexedProvider: string(indexedProvider), IndexedModel: indexedModel, IndexProviderSource: indexedSource, SemanticallyMeaningful: providerDeclared}
 	case embed.ProviderSidecar:
+		if queryModel == "" {
+			queryModel = "sidecar model not declared"
+		}
 		if indexedModel == "" || indexedModel == "unknown" {
-			indexedModel = "sidecar model (provider does not report a model id)"
+			indexedModel = queryModel
 		}
 		if indexedProvider != "" && indexedSource != "assumed equal to query provider; index manifest does not record it" {
 			indexedSource, providerDeclared = "persisted with indexed repo", true
 		}
-		return cornefval.EmbeddingMetadata{QueryProvider: string(provider), QueryModel: "sidecar model (provider does not report a model id)", IndexedProvider: string(indexedProvider), IndexedModel: indexedModel, IndexProviderSource: indexedSource, SemanticallyMeaningful: providerDeclared}
+		return cornefval.EmbeddingMetadata{QueryProvider: string(provider), QueryModel: queryModel, IndexedProvider: string(indexedProvider), IndexedModel: indexedModel, IndexProviderSource: indexedSource, SemanticallyMeaningful: providerDeclared}
 	default:
 		return cornefval.EmbeddingMetadata{QueryProvider: string(provider), QueryModel: "deterministic hash-derived fake", IndexedProvider: string(indexedProvider), IndexedModel: "deterministic hash-derived fake", IndexProviderSource: indexedSource, SemanticallyMeaningful: false}
 	}
