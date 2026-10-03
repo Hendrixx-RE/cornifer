@@ -71,9 +71,11 @@ Adding a repository then calls the embedding provider and may incur its
 usage charges. Keep keys in the server environment, never in browser code or
 committed files. Add a public `https://github.com/owner/repository` URL in the
 website, optionally select a branch/tag/commit, and wait for indexing to finish.
-Python has structural graph coverage; other recognized extensions appear in the file catalog without structural
-symbols or edges. Generic lexical chunking is currently incomplete; see the
-user guide for the precise limitation.
+Python has structural graph coverage. Other recognized docs/source extensions
+receive bounded generic text chunks for BM25 retrieval and cited source
+inspection, without structural symbols, edges, or embedding vectors. The
+companion URL intake still requires hosted embedding configuration even for a
+text-only repository; it does not switch to fake or local inference.
 
 Hosted chat is configured independently and is optional. Without it, the Ask
 panel returns cited source evidence instead of generated answers. For chat

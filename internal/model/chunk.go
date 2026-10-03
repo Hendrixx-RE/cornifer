@@ -59,6 +59,7 @@ type Chunk struct {
 	// Embedding is the dense vector for ContextHeader+Text, produced by an
 	// Embedder. Its length must equal the configured embedding dimension
 	// (DefaultEmbeddingDim unless overridden by EmbeddingDimEnvVar); it is
-	// nil until embedding has run for this chunk.
+	// nil until embedding has run for this chunk. Generic text chunks remain
+	// nil deliberately: they participate in lexical retrieval only.
 	Embedding []float32
 }

@@ -41,6 +41,7 @@ func newReindexCmd() *cobra.Command {
 				MaxEmbedTokens: maxEmbedTokens,
 				CacheDir:       globals.cacheDir,
 				Logf:           logf,
+				IncludeText:    true,
 			}
 
 			var stats *indexer.Stats

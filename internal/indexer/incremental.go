@@ -75,6 +75,9 @@ func IncrementalIndex(ctx context.Context, st store.Store, cfg Config) (*Stats, 
 
 	doneWalk := stats.track("walk")
 	walked, err := walker.Walk(ctx, root)
+	if cfg.IncludeText {
+		walked, err = walker.WalkWithText(ctx, root)
+	}
 	doneWalk()
 	if err != nil {
 		return nil, fmt.Errorf("indexer: walk: %w", err)
@@ -82,12 +85,22 @@ func IncrementalIndex(ctx context.Context, st store.Store, cfg Config) (*Stats, 
 	stats.Files = len(walked)
 	current := make(map[string]bool, len(walked))
 	changed := make(map[string]bool)
+	// Backfill generic files admitted by older versions that stored their file
+	// rows but produced no lexical chunks, even if their content is unchanged.
+	oldChunks, err := st.ListChunks(ctx, repo.ID)
+	if err != nil {
+		return nil, fmt.Errorf("indexer: list existing chunks: %w", err)
+	}
+	chunked := make(map[int64]bool)
+	for _, c := range oldChunks {
+		chunked[c.FileID] = true
+	}
 	var upsert []*model.File
 	for i := range walked {
 		file := &walked[i].File
 		current[file.Path] = true
 		old := oldByPath[file.Path]
-		if old == nil || old.ContentHash != file.ContentHash {
+		if old == nil || old.ContentHash != file.ContentHash || (file.Language != "python" && len(walked[i].Content) > 0 && !chunked[old.ID]) {
 			changed[file.Path] = true
 			file.RepoID = repo.ID
 			upsert = append(upsert, file)
@@ -100,6 +113,7 @@ func IncrementalIndex(ctx context.Context, st store.Store, cfg Config) (*Stats, 
 		}
 	}
 	if len(changed) == 0 && len(deleted) == 0 {
+		stats.Chunks = len(oldChunks)
 		cfg.log("incremental reindex: no content-hash changes for %s @ %s", root, commitSHA)
 		return stats, nil
 	}
@@ -149,6 +163,9 @@ func IncrementalIndex(ctx context.Context, st store.Store, cfg Config) (*Stats, 
 		if file == nil {
 			closeResults(results)
 			return nil, fmt.Errorf("indexer: missing reloaded file %s", walked[i].Path)
+		}
+		if file.Language != "python" {
+			continue
 		}
 		result, err := parser.Parse(ctx, file.Path, walked[i].Content)
 		if err != nil {
@@ -210,11 +227,23 @@ func IncrementalIndex(ctx context.Context, st store.Store, cfg Config) (*Stats, 
 	doneChunk := stats.track("chunk")
 	chunker := chunk.NewWithOptions(cfg.ChunkOptions)
 	var changedChunks []*model.Chunk
-	for i, valid := range ok {
-		if !valid || !changed[walked[i].Path] {
+	var genericChunks []*model.Chunk
+	for i := range walked {
+		if !changed[walked[i].Path] {
 			continue
 		}
 		file := fileByPath[walked[i].Path]
+		if file.Language != "python" {
+			chunks, err := chunk.Text(ctx, file, walked[i].Content, cfg.ChunkOptions)
+			if err != nil {
+				return nil, fmt.Errorf("indexer: chunk generic %s: %w", file.Path, err)
+			}
+			genericChunks = append(genericChunks, chunks...)
+			continue
+		}
+		if !ok[i] {
+			continue
+		}
 		chunks, err := chunker.Chunk(ctx, file, walked[i].Content, perFile[i])
 		if err != nil {
 			cfg.log("warning: %s: chunk failed, skipping: %v", file.Path, err)
@@ -225,6 +254,9 @@ func IncrementalIndex(ctx context.Context, st store.Store, cfg Config) (*Stats, 
 	doneChunk()
 	if err := embedAndStore(ctx, st, changedChunks, embedCfg, cfg); err != nil {
 		return nil, err
+	}
+	if err := st.InsertChunks(ctx, genericChunks); err != nil {
+		return nil, fmt.Errorf("indexer: store generic chunks: %w", err)
 	}
 
 	doneBM25 := stats.track("bm25")

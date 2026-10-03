@@ -2,7 +2,7 @@
 
 This guide describes the local companion website and its companion MCP tools
 as implemented in the unpublished `ao/cornifer-19/root` checkout, based on
-commit `7ae1154` plus the focused credential-retry correction accompanying this guide. It was checked against the code and running local service on
+commit `7ae1154` plus the credential-retry and generic lexical indexing corrections accompanying this guide. It was checked against the code and running local service on
 4 October 2026. See [completion status](#completion-status-and-known-limits)
 before treating it as a finished production product.
 
@@ -285,18 +285,43 @@ or comparison view.
   The source endpoint limits an individual range to at most 501 lines.
 
 Python is the only language with structural symbol/relationship extraction.
-Common documentation and other source extensions are admitted to the file
-catalog without structural nodes or edges. Examples include Markdown, Go,
-JavaScript/TypeScript, Java, Rust, C/C++, Ruby, PHP, shell, JSON, YAML, and TOML.
-The intended generic lexical fallback is incomplete in this checkout: the
-chunk loop currently includes only successfully parsed Python files, so generic
-files can appear in navigation/source but are not guaranteed searchable as
-evidence. A repository containing only these files may have no retrievable
-chunks. This is not equivalent language analysis. Unsupported
-extensions, excluded files, external dependencies, and unresolved relationships
-are not guaranteed to appear. **About language coverage** and the in-place
-coverage note explain this distinction. An empty graph does not mean the
-repository has no code; searchable evidence also depends on actual chunks.
+Common supported documentation and source extensions receive generic text
+chunks for lexical (BM25) retrieval, alongside file navigation and source
+inspection. Examples include Markdown, Go, JavaScript/TypeScript, Java, Rust,
+C/C++, Ruby, PHP, shell, JSON, YAML, and TOML. Generic chunks have no embedding
+vectors, symbols, or graph edges. They remain lexical even when hybrid
+retrieval is enabled for Python. Other language structural coverage is
+unsupported; this is not equivalent language analysis.
+
+Generic chunks are bounded to 4,096 source bytes and 128 lines, targeting 512
+estimated tokens including their bounded context header under default settings.
+They keep inclusive source line numbers and raw text. Oversized single lines
+are split on UTF-8 boundaries; their fragments share that line number, so
+opening the citation displays the original whole line. The excerpt hash refers
+to the actual fragment. Empty files have no chunks. Generic text must be valid
+UTF-8. Unsupported extensions, excluded files, external dependencies, and
+unresolved relationships are not guaranteed to appear. **About language
+coverage** and the in-place coverage note explain the structural distinction.
+An empty graph does not mean the repository has no searchable text.
+
+Full indexing and incremental reindex both include generic files. Incremental
+reindex updates added/changed/deleted files and rebuilds BM25; unchanged content
+retains its chunk IDs and BM25 cache. It also backfills nonempty generic files
+whose old file records exist but have no chunks. Simply restarting the server
+or refreshing the browser does not rebuild an existing index. The engine CLI
+`index` and `reindex` now include supported generic formats by default; the
+website has no reindex button. Reindex needs the same checkout and cache paths,
+database, dimension, and original embedding provider/model. Python changes may
+make hosted embedding calls; generic-only updates do not embed generic text.
+Do not use fake vectors to repair a real hosted index.
+
+Pinned companion snapshots should not be edited in place. The engine's
+same-commit incremental path can index working-tree edits, but a context pack
+already cached for that question/snapshot may remain cached for ten minutes.
+This correction does not introduce automatic invalidation of saved context or
+session evidence; use a newly indexed pinned snapshot for new repository code.
+The companion URL runner still requires Voyage credentials before indexing,
+even if a repository turns out to contain only generic text.
 
 ### Ask Cornifer, context, and citations
 
@@ -456,7 +481,7 @@ setup is required or performed by the workflows in this guide.
 | `CORNIFER_COMPANION_DIR` | Shallow repository checkouts under `repos/`, BM25 caches under `cache/`, and embedding cache under `embeddings/`. Recorded snapshot paths must stay available. |
 | Browser localStorage | The last application session ID per repository for that origin/profile, not API keys. |
 | GitHub | Repository/ref fetch requests; public code is downloaded to this machine. |
-| Voyage when configured | Indexing source chunks and uncached search questions for embeddings, plus model/output-dimension/request metadata. The current chunk-loop gap excludes generic non-Python files from embedding/retrieval chunks. |
+| Voyage when configured | Indexing source chunks and uncached search questions for embeddings, plus model/output-dimension/request metadata. Generic docs/source-text chunks stay local and lexical; they are not sent for indexing embeddings. A configured hybrid search may still send its question for a query embedding. |
 | Hosted chat when configured | The bounded context pack: query, repository URL/SHA/capabilities, evidence excerpts/path/lines/hashes, retrieval metadata and relationships. Saved session notes are not automatically included. |
 
 Repository size, chunk count, repeated snapshots, embeddings, source caches,
@@ -504,7 +529,7 @@ an older binary does not install new UI code.
 | `awaiting_credentials` persists | Configure embeddings, restart/reload, then explicitly submit the same URL and original ref. Restart/configure alone does not create a retry job. |
 | Failed URL/ref | Use a public repository root URL and a ref accepted by GitHub. Safe messages intentionally omit raw command/provider output. |
 | Stuck active job after restart | No automatic job recovery/reconciliation exists. Refresh checks status, not worker liveness. |
-| Graph absent | Confirm `ready`, Python structural coverage, available indexed symbols, and intact checkout/cache paths. Other languages have no graph nodes; the current generic chunk-loop gap also limits lexical fallback. |
+| Graph absent | Confirm `ready`, Python structural coverage, available indexed symbols, and intact checkout/cache paths. Other languages have no graph nodes but supported nonempty text files have lexical chunks. Old indexes need reindexing to backfill missing chunks. |
 | Symbol search misses a name | The catalog currently filters file paths before symbols. Use the filename/path and browse, or retrieve code text through Ask. |
 | No evidence | Try terms present in the code. Missing embedding credentials uses lexical retrieval for existing indexes; an empty result is not a generated answer. |
 | Hosted chat error | Check all four chat env values and full endpoint/model compatibility, restart, and reload. When configured chat fails the UI displays the error; it does not automatically fall back to the retrieval-only endpoint. |
@@ -525,9 +550,10 @@ fully complete or production validated**.
 | **Verified on a real indexed fixture** | The explicitly identified FastAPI 0.115.0 fixture at pinned commit `40e33e492dbf…` contained 44 files, 716 symbols and 524 edges. Browser/API checks covered repository selection, graph node/filter/zoom/fit, source navigation, lexical context/citations, and session create/remember/clear. This used existing indexed fixture data, not a new hosted ingestion run. |
 | **Current user app verified** | One Cornifer listener on localhost7788, existing user Postgres5433 preserved, health OK, current embedded assets loaded, empty/no-credentials states inspected in AO Browser. The user has since submitted Cornifer itself; it is awaiting embedding credentials, not ready. The temporary fixture preview was stopped during server cleanup. |
 | **Partial interaction verification** | Graph pan logic was inspected and motion logic checked, but a complete browser pan/coordinate assertion and responsive viewport matrix remain unverified. A screenshot was captured during earlier animation work; other screenshot attempts were blocked by panel visibility/timeouts. Copy control was inspected, but an independent OS clipboard read-back was not completed. These are verification gaps, not evidence of provider success. |
+| **Generic lexical indexing corrected and verified** | Offline isolated-Postgres regressions returned actual Markdown/TypeScript/Go evidence through shared companion context and its HTTP handler, with normalized paths, source spans, hashes and commit SHA. Text-only fixture: 5 files, 9 lexical chunks, no vectors/nodes/edges. Mixed fixture: 6 files, 10 chunks, 1 fake-vector Python chunk only inside the test, 3 Python nodes and 1 call edge. Added/changed/deleted generic files, unchanged cache/chunk IDs, oversized UTF-8 lines, and legacy backfill were checked. No hosted calls or user database mutation. |
 | **Credential retry corrected** | Explicit same-URL/ref submission requeues a credential-blocked snapshot after configuration/restart; its SHA is retained. This is regression-tested locally, not a successful live provider ingestion. |
 | **Provider-blocked / not exercised** | No new end-to-end public URL → Voyage embedding → ready corpus run, live hybrid provider query, or hosted chat answer validation has been performed. Adapter tests use controlled test responses. Keys are absent in the current running app; no paid requests were made. |
-| **Known implementation gaps** | Interrupted active-job restart recovery, same-SHA repeat finalization, independent symbol-name catalog search, incomplete generic-file lexical chunking, automatic memory recall/summary, scheduled expiry cleanup, full-client MCP configuration copy, and large/full graph coverage remain limited as described above. |
+| **Known implementation gaps** | Interrupted active-job restart recovery, same-SHA repeat finalization, independent symbol-name catalog search, automatic memory recall/summary, scheduled expiry cleanup, full-client MCP configuration copy, and large/full graph coverage remain limited as described above. |
 | **Not delivered** | Production deployment, authentication/remote-user operation, private GitHub ingestion, structural language parity beyond Python, or exact GitNexus feature parity. Changes remain local unpublished worker commits. |
 
 Implementation references: [server startup](../cmd/cornifer-serve/main.go),

@@ -89,10 +89,8 @@ func Index(ctx context.Context, st store.Store, cfg Config) (*Stats, error) {
 	results := make([]*parse.Result, len(files))
 	perFile := make([][]*model.Symbol, len(files))
 	ok := make([]bool, len(files)) // false if the file could not be parsed at all
-	chunkable := make([]bool, len(files))
 
 	for i, f := range files {
-		chunkable[i] = true
 		if f.Language != "python" {
 			// Generic text/source files are lexical-only. Do not run the Python
 			// extractor/resolver or imply graph coverage for them.
@@ -135,8 +133,8 @@ func Index(ctx context.Context, st store.Store, cfg Config) (*Stats, error) {
 
 	doneResolve := stats.track("resolve")
 	var inputs []resolve.FileInput
-	for i, canChunk := range chunkable {
-		if !canChunk {
+	for i, valid := range ok {
+		if !valid {
 			continue
 		}
 		inputs = append(inputs, resolve.FileInput{File: files[i], Symbols: perFile[i], Result: results[i]})
@@ -171,8 +169,17 @@ func Index(ctx context.Context, st store.Store, cfg Config) (*Stats, error) {
 	doneChunk := stats.track("chunk")
 	chunker := chunk.NewWithOptions(cfg.ChunkOptions)
 	var allChunks []*model.Chunk
-	for i, isOK := range ok {
-		if !isOK {
+	var structuralChunks []*model.Chunk
+	for i, file := range files {
+		if file.Language != "python" {
+			cs, err := chunk.Text(ctx, file, walked[i].Content, cfg.ChunkOptions)
+			if err != nil {
+				return nil, fmt.Errorf("indexer: chunk generic %s: %w", file.Path, err)
+			}
+			allChunks = append(allChunks, cs...)
+			continue
+		}
+		if !ok[i] {
 			continue
 		}
 		cs, err := chunker.Chunk(ctx, files[i], walked[i].Content, perFile[i])
@@ -181,17 +188,13 @@ func Index(ctx context.Context, st store.Store, cfg Config) (*Stats, error) {
 			continue
 		}
 		allChunks = append(allChunks, cs...)
+		structuralChunks = append(structuralChunks, cs...)
 	}
 	doneChunk()
 	stats.Chunks = len(allChunks)
 	cfg.log("built %d chunk(s)", len(allChunks))
 
 	// Embed
-
-	embedder, err := BuildEmbedder(embedCfg)
-	if err != nil {
-		return nil, fmt.Errorf("indexer: build embedder: %w", err)
-	}
 
 	doneEmbed := stats.track("embed")
 	symbolByID := make(map[int64]*model.Symbol)
@@ -206,8 +209,8 @@ func Index(ctx context.Context, st store.Store, cfg Config) (*Stats, error) {
 	}
 
 	maxTok := cfg.maxEmbedTokens()
-	texts := make([]string, len(allChunks))
-	for i, c := range allChunks {
+	texts := make([]string, len(structuralChunks))
+	for i, c := range structuralChunks {
 		text := chunk.EmbeddingText(c)
 		if n := chunk.CountTokens(text); n > maxTok {
 			stats.OversizedTruncated++
@@ -219,19 +222,23 @@ func Index(ctx context.Context, st store.Store, cfg Config) (*Stats, error) {
 	}
 
 	if len(texts) > 0 {
+		embedder, err := BuildEmbedder(embedCfg)
+		if err != nil {
+			return nil, fmt.Errorf("indexer: build embedder: %w", err)
+		}
 		vectors, err := embedder.Embed(ctx, texts)
 		if err != nil {
 			doneEmbed()
 			return nil, fmt.Errorf("indexer: embed chunks: %w", err)
 		}
-		if len(vectors) != len(allChunks) {
+		if len(vectors) != len(structuralChunks) {
 			doneEmbed()
-			return nil, fmt.Errorf("indexer: embedder returned %d vectors for %d chunks", len(vectors), len(allChunks))
+			return nil, fmt.Errorf("indexer: embedder returned %d vectors for %d chunks", len(vectors), len(structuralChunks))
 		}
-		for i, c := range allChunks {
+		for i, c := range structuralChunks {
 			c.Embedding = vectors[i]
 		}
-		stats.Embedded = len(allChunks)
+		stats.Embedded = len(structuralChunks)
 	}
 	doneEmbed()
 

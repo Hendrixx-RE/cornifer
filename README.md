@@ -128,10 +128,12 @@ Without hosted embedding credentials, indexing enters an explicit
 excerpt hash, retrieval provenance, and graph relationships. Its explicit
 application `session_id` is persisted, bounded, and repo+commit scoped; a
 moved ref receives a separate snapshot rather than overwriting it. Python is the only structural-graph language
-today. The companion admits common docs and source-text extensions into its file
-catalog, but generic lexical chunking is currently incomplete (the chunk loop
-selects parsed Python files). Those files have no structural symbols or graph
-edges. See the user guide for current coverage and verification limits.
+today. Common supported docs and other source-text formats receive bounded,
+line-aware generic chunks persisted in Postgres and BM25, with normalized
+source citations and excerpt hashes. These chunks have no vectors, symbols, or
+graph edges; their retrieval is lexical. Full and incremental indexing both
+include them. Incremental reindex also backfills older generic file records
+that have no chunks. See the user guide for coverage and verification limits.
 
 ## Architecture
 

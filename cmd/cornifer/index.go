@@ -35,6 +35,7 @@ func newIndexCmd() *cobra.Command {
 				MaxEmbedTokens: maxEmbedTokens,
 				CacheDir:       globals.cacheDir,
 				Logf:           logf,
+				IncludeText:    true,
 			}
 
 			stats, err := indexer.Index(ctx, st, cfg)
