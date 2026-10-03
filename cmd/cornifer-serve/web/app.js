@@ -11,6 +11,16 @@ const API = async (url, options = {}) => {
 const state = {repos: [], selected: null, graph: null, nodes: new Map(), edges: [], selectedNode: null, activeFile: '', sessionID: '', chatConfigured: false, embeddingConfigured: false, scale: 1, tx: 0, ty: 0, graphMode: true, jobs: new Map()};
 const MCP_URL = `http://127.0.0.1:${location.port || '7791'}/mcp`;
 const svgNS = 'http://www.w3.org/2000/svg';
+const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+const panelAnimations = new WeakMap();
+function reveal(element) {
+  panelAnimations.get(element)?.cancel();
+  if (reducedMotion.matches || !element?.animate || element.hidden) return;
+  panelAnimations.set(element, element.animate([
+    {opacity: .35, transform: 'translateY(5px)'},
+    {opacity: 1, transform: 'translateY(0)'}
+  ], {duration: 220, easing: 'cubic-bezier(.2,.8,.2,1)'}));
+}
 let toastTimer;
 function toast(message) { const el = $('#toast'); el.textContent = message; el.classList.add('visible'); clearTimeout(toastTimer); toastTimer = setTimeout(() => el.classList.remove('visible'), 2200); }
 function setStatus(selector, message, cls = '') { const el = $(selector); el.textContent = message; el.className = `inline-status ${cls}`.trim(); }
@@ -75,6 +85,7 @@ async function selectRepository(repo) {
   if (repo.status === 'ready') state.sessionID = readStoredSession(repo.id);
   state.nodes.clear(); state.edges = []; state.graph = null;
   $('#welcome').hidden = true; $('#workspace').hidden = false; $('#files-section').hidden = true;
+  reveal($('#workspace'));
   $('#answer').replaceChildren(); $('#memory-events').replaceChildren(); $('#remember-form').hidden = true;
   $('#session').textContent = 'Search or ask a question to start a repository and commit scoped session.';
   $('#clear-session').disabled = !state.sessionID; $('#question').disabled = repo.status !== 'ready'; $('#ask').disabled = repo.status !== 'ready';
@@ -112,7 +123,7 @@ function showRepoState(repo) {
 function statusMessage(status) { return ({queued:'Waiting for the index worker.',cloning:'Cloning the selected GitHub ref.',resolving:'Resolving source relationships.',indexing:'Building the repository snapshot.',awaiting_credentials:'Configure a hosted embedding provider, then submit this repository again.',failed:'The snapshot could not be indexed. Check configuration and retry.',cancelled:'Indexing was cancelled. Submit again to retry.'})[status] || 'Snapshot is not ready yet.'; }
 
 $('#ingest-form').addEventListener('submit', async event => {
-  event.preventDefault(); const button = $('#index'); button.disabled = true;
+  event.preventDefault(); const button = $('#index'); button.disabled = true; button.setAttribute('aria-busy','true');
   try {
     const result = await API('/api/repos',{method:'POST',body:JSON.stringify({url:$('#repo-url').value.trim(),ref:$('#repo-ref').value.trim()})});
     state.selected = result.repository; if (result.job?.id) state.jobs.set(result.repository.id,result.job);
@@ -120,7 +131,7 @@ $('#ingest-form').addEventListener('submit', async event => {
     if (result.reused) toast('Existing repository job selected'); else toast('Index job queued');
     if (result.job?.id) pollJob(result.repository.id,result.job.id);
   } catch(error) { setStatus('#provider',error.message,'error'); }
-  finally { button.disabled = false; }
+  finally { button.disabled = false; button.removeAttribute('aria-busy'); }
 });
 $('#refresh').addEventListener('click', refreshRepos);
 
@@ -206,13 +217,28 @@ function drawGraph(){
   });
   applyTransform();
 }
-function applyTransform(){ $('#graph-world').setAttribute('transform',`translate(${state.tx} ${state.ty}) scale(${state.scale})`); }
-function zoom(delta, x=500,y=350){const old=state.scale;state.scale=Math.max(.45,Math.min(3.2,state.scale+delta));const k=state.scale/old;state.tx=x-(x-state.tx)*k;state.ty=y-(y-state.ty)*k;applyTransform();}
-$('#zoom-in').addEventListener('click',()=>zoom(.2));$('#zoom-out').addEventListener('click',()=>zoom(-.2));$('#fit-graph').addEventListener('click',()=>{state.scale=1;state.tx=0;state.ty=0;applyTransform();});$('#edge-filter').addEventListener('change',drawGraph);
+let transformFrame = 0;
+const renderedTransform = {tx: 0, ty: 0, scale: 1};
+function applyTransform(smooth=false){
+  cancelAnimationFrame(transformFrame);
+  const from={...renderedTransform},to={tx:state.tx,ty:state.ty,scale:state.scale};
+  const paint=progress=>{
+    for(const key of ['tx','ty','scale'])renderedTransform[key]=from[key]+(to[key]-from[key])*progress;
+    $('#graph-world').setAttribute('transform',`translate(${renderedTransform.tx} ${renderedTransform.ty}) scale(${renderedTransform.scale})`);
+  };
+  if(!smooth||reducedMotion.matches){paint(1);return;}
+  const start=performance.now();
+  const step=time=>{const progress=Math.min(1,(time-start)/180);paint(1-Math.pow(1-progress,3));if(progress<1)transformFrame=requestAnimationFrame(step);};
+  transformFrame=requestAnimationFrame(step);
+}
+function zoom(delta, x=500,y=350){const old=state.scale;state.scale=Math.max(.45,Math.min(3.2,state.scale+delta));const k=state.scale/old;state.tx=x-(x-state.tx)*k;state.ty=y-(y-state.ty)*k;applyTransform(true);}
+$('#zoom-in').addEventListener('click',()=>zoom(.2));$('#zoom-out').addEventListener('click',()=>zoom(-.2));$('#fit-graph').addEventListener('click',()=>{state.scale=1;state.tx=0;state.ty=0;applyTransform(true);});$('#edge-filter').addEventListener('change',drawGraph);
 const graphSVG=$('#graph');let drag=null;
-graphSVG.addEventListener('pointerdown',event=>{if(event.target.closest('.node'))return;drag={x:event.clientX,y:event.clientY,tx:state.tx,ty:state.ty};graphSVG.classList.add('panning');graphSVG.setPointerCapture(event.pointerId);});
+graphSVG.addEventListener('pointerdown',event=>{if(event.target.closest('.node'))return;cancelAnimationFrame(transformFrame);Object.assign(state,renderedTransform);drag={x:event.clientX,y:event.clientY,tx:state.tx,ty:state.ty};graphSVG.classList.add('panning');graphSVG.setPointerCapture(event.pointerId);});
 graphSVG.addEventListener('pointermove',event=>{if(!drag)return;state.tx=drag.tx+(event.clientX-drag.x);state.ty=drag.ty+(event.clientY-drag.y);applyTransform();});
 graphSVG.addEventListener('pointerup',()=>{drag=null;graphSVG.classList.remove('panning');});
+graphSVG.addEventListener('pointercancel',()=>{drag=null;graphSVG.classList.remove('panning');});
+reducedMotion.addEventListener('change',()=>{if(reducedMotion.matches){document.getAnimations().forEach(animation=>animation.cancel());applyTransform();}});
 graphSVG.addEventListener('wheel',event=>{event.preventDefault();zoom(event.deltaY<0?.08:-.08,event.offsetX,event.offsetY);},{passive:false});
 
 async function selectNode(id){const node=state.nodes.get(id);if(!node)return;state.selectedNode=node;state.activeFile=node.path;renderFileList();drawGraph();$('#node-kind').textContent=node.kind;
@@ -221,28 +247,30 @@ async function selectNode(id){const node=state.nodes.get(id);if(!node)return;sta
   $('#inspector-content .open-source').addEventListener('click',()=>openFile(node.path,node.start_line,node.end_line));
   $$('.relation-link','#inspector-content').forEach(button=>button.addEventListener('click',()=>selectNode(button.dataset.node)));
   $('.symbol-location','#inspector-content').addEventListener('click',event=>{event.preventDefault();openFile(node.path,node.start_line,node.end_line);});
+  reveal($('#inspector-content'));
   await openFile(node.path,node.start_line,node.end_line,false);
 }
 function $$(selector,root=document){root=typeof root==='string'?document.querySelector(root):root;return [...root.querySelectorAll(selector)];}
 async function openFile(path,start=1,end=80,showSourceTab=true){if(!state.selected)return;state.activeFile=path;renderFileList();
-  try{const query=new URLSearchParams({path,start:String(Math.max(1,start)),end:String(Math.max(start,end))});const source=await API(`${apiPath(state.selected.id,'source')}?${query}`);$('#source-panel').hidden=false;$('#source-path').textContent=source.path;$('#source-range').textContent=`lines ${source.start_line}–${source.end_line} · ${source.language}`;const code=$('#source-code code');code.replaceChildren();code.textContent=source.content.split('\n').map((line,index)=>`${source.start_line+index}`.padStart(4,' ')+'  '+line).join('\n');if(showSourceTab)setView('source');}
+  try{const query=new URLSearchParams({path,start:String(Math.max(1,start)),end:String(Math.max(start,end))});const source=await API(`${apiPath(state.selected.id,'source')}?${query}`);$('#source-panel').hidden=false;$('#source-path').textContent=source.path;$('#source-range').textContent=`lines ${source.start_line}–${source.end_line} · ${source.language}`;const code=$('#source-code code');code.replaceChildren();code.textContent=source.content.split('\n').map((line,index)=>`${source.start_line+index}`.padStart(4,' ')+'  '+line).join('\n');if(showSourceTab)setView('source');reveal($('#source-code'));}
   catch(error){toast(`Could not open source: ${error.message}`);}
 }
 $('#source-close').addEventListener('click',()=>$('#source-panel').hidden=true);
 function setView(mode){state.graphMode=mode==='graph';$('#graph-tab').classList.toggle('active',state.graphMode);$('#graph-tab').setAttribute('aria-selected',String(state.graphMode));$('#source-tab').classList.toggle('active',!state.graphMode);$('#source-tab').setAttribute('aria-selected',String(!state.graphMode));$('#graph-controls').hidden=!state.graphMode;$('.explorer-grid').hidden=!state.graphMode;$('#source-panel').hidden=state.graphMode||!state.activeFile;$('#source-panel').classList.toggle('standalone',!state.graphMode);}
-$('#graph-tab').addEventListener('click',()=>setView('graph'));$('#source-tab').addEventListener('click',()=>{setView('source');if(state.activeFile)openFile(state.activeFile,1,100,false);});
+$('#graph-tab').addEventListener('click',()=>{setView('graph');reveal($('.explorer-grid'));});$('#source-tab').addEventListener('click',()=>{setView('source');if(state.activeFile)openFile(state.activeFile,1,100,false);});
 
-$('#ask-form').addEventListener('submit',async event=>{event.preventDefault();if(!state.selected||!$('#question').value.trim())return;const button=$('#ask');button.disabled=true;$('#answer').innerHTML='<p class="answer-state">Retrieving indexed evidence…</p>';setStatus('#question-status',state.chatConfigured?'Preparing a cited response using hosted chat…':'Searching indexed text with citations…');
+$('#ask-form').addEventListener('submit',async event=>{event.preventDefault();if(!state.selected||!$('#question').value.trim())return;const button=$('#ask');button.disabled=true;button.setAttribute('aria-busy','true');$('#answer').innerHTML='<p class="answer-state">Retrieving indexed evidence…</p>';setStatus('#question-status',state.chatConfigured?'Preparing a cited response using hosted chat…':'Searching indexed text with citations…');
   try{const endpoint=state.chatConfigured?'/api/answer':'/api/context';const output=await API(endpoint,{method:'POST',body:JSON.stringify({repository_id:state.selected.id,question:$('#question').value.trim(),session_id:state.sessionID})});const pack=state.chatConfigured?output.answer.context:output.context;state.sessionID=output.session.id;storeSession(state.selected.id,state.sessionID);renderSession(output.session,[]);
     const generated=state.chatConfigured?`<p class="answer-intro">${linkCitations(output.answer.text)}</p>`:'';const degraded=pack.retrieval.degraded?'<p class="answer-state">Lexical retrieval only · no hosted embedding query credentials are available.</p>':'';
     const evidences=pack.evidence.map(e=>`<article class="evidence"><div class="evidence-head"><a class="citation-link" href="#source-panel" data-path="${esc(e.path)}" data-start="${e.start_line}" data-end="${e.end_line}">[${esc(e.id)}] ${esc(e.path)}:${e.start_line}–${e.end_line}</a><span class="evidence-symbol">${esc(e.symbol||'module')}</span></div><pre>${esc(e.snippet)}</pre><small class="evidence-meta">${esc((e.retrieval_sources||[]).join(' · '))} · SHA ${esc((e.excerpt_sha256||'').slice(0,12))}</small></article>`).join('');
     $('#answer').innerHTML=`${generated}${degraded}${evidences||'<p class="answer-state">No evidence matched this question in the selected snapshot.</p>'}`;
+    reveal($('#answer'));
     $$('.citation-link','#answer').forEach(link=>link.addEventListener('click',event=>{event.preventDefault();openFile(link.dataset.path,Number(link.dataset.start),Number(link.dataset.end));}));
     $$('.inline-citation','#answer').forEach(link=>link.addEventListener('click',event=>{event.preventDefault();const citation=pack.evidence.find(item=>item.id===link.dataset.citation);if(citation)openFile(citation.path,citation.start_line,citation.end_line);}));
     setStatus('#question-status',state.chatConfigured?'Answer linked to retrieved source evidence.':'Context pack ready · configure hosted chat separately to generate an answer.');
     await loadSession();
   }catch(error){$('#answer').innerHTML=`<p class="answer-state error">${esc(error.message)}</p>`;setStatus('#question-status',error.message,'error');}
-  finally{button.disabled=false;}
+  finally{button.disabled=false;button.removeAttribute('aria-busy');}
 });
 $('#question').addEventListener('keydown',event=>{if(event.key==='Enter'&&!event.shiftKey&&!event.isComposing){event.preventDefault();$('#ask-form').requestSubmit();}});
 function linkCitations(text){const escaped=esc(text);return escaped.replace(/\[(e\d+)\]/g,'<a class="citation-link inline-citation" href="#source-panel" data-citation="$1">[$1]</a>');}

@@ -90,6 +90,10 @@ matching commit; only the BM25 index is a local cache.
 
 ## Local companion (website + MCP)
 
+For complete startup, shutdown, and troubleshooting instructions, see
+[Run the Cornifer website locally](docs/local-companion.md). The UI is served
+by Go and requires no npm setup.
+
 `cornifer-serve` is a localhost-only companion. It accepts public GitHub HTTPS
 URLs, clones a detached commit without running repository code or hooks, and
 keeps provider keys in the Go process rather than browser JavaScript.

@@ -9,3 +9,63 @@
 @media(max-width:720px){.add-repo{display:flex;flex-direction:column;align-items:stretch}.add-repo label{align-self:flex-start}.ref-row{width:100%}.ref-row input{display:block}.ref-row button{width:auto;height:auto;flex:none}}
 .graph-slice-status{font-size:8px;color:var(--muted);white-space:nowrap;margin:0 5px}
 @media(max-width:720px){.graph-slice-status{display:none}}
+
+/* Short, functional motion. All surfaces and highlights keep flat fills. */
+@keyframes surface-enter {
+  from { opacity: .35; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes node-enter {
+  from { opacity: .3; transform: scale(.6); }
+  to { opacity: 1; transform: scale(1); }
+}
+@keyframes edge-enter { from { opacity: .15; } to { opacity: .68; } }
+@keyframes selection-ring { from { stroke-width: 7; } to { stroke-width: 3; } }
+@keyframes busy-turn { to { transform: rotate(360deg); } }
+
+.rail, .workbench, .assistant-rail { animation: surface-enter 320ms cubic-bezier(.2,.8,.2,1); }
+.workbench { animation-delay: 40ms; }
+.assistant-rail { animation-delay: 80ms; }
+.welcome-state > * { animation: surface-enter 360ms cubic-bezier(.2,.8,.2,1) both; }
+.welcome-state > :nth-child(2) { animation-delay: 50ms; }
+.welcome-state > :nth-child(3) { animation-delay: 100ms; }
+.welcome-state > :nth-child(4) { animation-delay: 150ms; }
+.welcome-state > :nth-child(5) { animation-delay: 180ms; }
+
+button, a, input, textarea, select {
+  transition: background-color 140ms ease, color 140ms ease, border-color 140ms ease;
+}
+.quiet-button, .icon-button, #index, #ask, #remember, .endpoint {
+  transition: background-color 140ms ease, color 140ms ease, border-color 140ms ease, transform 140ms ease;
+}
+.quiet-button:hover:not(:disabled), .icon-button:hover:not(:disabled),
+#index:hover:not(:disabled), #ask:hover:not(:disabled), #remember:hover:not(:disabled) {
+  transform: translateY(-1px);
+}
+.quiet-button:active:not(:disabled), .icon-button:active:not(:disabled),
+#index:active:not(:disabled), #ask:active:not(:disabled), #remember:active:not(:disabled),
+.endpoint:active { transform: translateY(1px); }
+.node circle {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: node-enter 240ms cubic-bezier(.2,.8,.2,1);
+  transition: stroke 140ms ease, stroke-width 140ms ease, fill 140ms ease;
+}
+.node.selected circle { animation: selection-ring 300ms ease-out; }
+.node:focus-visible { outline: none; }
+.node:focus-visible circle { stroke: var(--caret); stroke-width: 4; }
+.edge { animation: edge-enter 240ms ease-out; }
+.memory-event { animation: surface-enter 180ms ease-out; }
+#ask[aria-busy="true"], #index[aria-busy="true"] { display: inline-flex; align-items: center; gap: 7px; }
+#ask[aria-busy="true"]::after, #index[aria-busy="true"]::after {
+  content: "";
+  width: 10px;
+  height: 10px;
+  border: 1.5px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: busy-turn 700ms linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}
