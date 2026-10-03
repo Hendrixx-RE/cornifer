@@ -4,13 +4,18 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 )
 
 // HTTPHandler is intentionally small: the browser and MCP call the same
 // Service methods and receive the same citations/session boundary.
-func HTTPHandler(service *Service, runtime RuntimeConfig) http.Handler {
+func HTTPHandler(service *Service, runtime RuntimeConfig, explorers ...Explorer) http.Handler {
 	mux := http.NewServeMux()
+	var explorer Explorer
+	if len(explorers) > 0 {
+		explorer = explorers[0]
+	}
 	mux.HandleFunc("GET /api/health", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "embedding_configured": runtime.configuredEmbedding(), "embedding_provider": runtime.EmbeddingProvider, "chat_configured": chatConfigured()})
 	})
@@ -33,6 +38,34 @@ func HTTPHandler(service *Service, runtime RuntimeConfig) http.Handler {
 	mux.HandleFunc("GET /api/repos/{id}", func(w http.ResponseWriter, r *http.Request) {
 		repo, err := service.GetRepository(r.Context(), r.PathValue("id"))
 		respond(w, repo, err)
+	})
+	mux.HandleFunc("GET /api/repos/{id}/graph", func(w http.ResponseWriter, r *http.Request) {
+		repo, err := service.GetRepository(r.Context(), r.PathValue("id"))
+		if err != nil {
+			respond(w, nil, err)
+			return
+		}
+		if !repo.Status.Ready() {
+			respond(w, nil, errors.New("repository snapshot is not ready"))
+			return
+		}
+		graph, err := explorer.Graph(r.Context(), repo, r.URL.Query().Get("kind"))
+		respond(w, graph, err)
+	})
+	mux.HandleFunc("GET /api/repos/{id}/source", func(w http.ResponseWriter, r *http.Request) {
+		repo, err := service.GetRepository(r.Context(), r.PathValue("id"))
+		if err != nil {
+			respond(w, nil, err)
+			return
+		}
+		if !repo.Status.Ready() {
+			respond(w, nil, errors.New("repository snapshot is not ready"))
+			return
+		}
+		start, _ := strconv.Atoi(r.URL.Query().Get("start"))
+		end, _ := strconv.Atoi(r.URL.Query().Get("end"))
+		source, err := explorer.Source(r.Context(), repo, r.URL.Query().Get("path"), start, end)
+		respond(w, source, err)
 	})
 	mux.HandleFunc("GET /api/jobs/{id}", func(w http.ResponseWriter, r *http.Request) {
 		job, err := service.GetJob(r.Context(), r.PathValue("id"))

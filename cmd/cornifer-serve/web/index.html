@@ -1,1 +1,114 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Cornifer — local repository intelligence</title><link rel="stylesheet" href="/styles.css"></head><body><header><a class="brand" href="/">CORNIFER<span>_</span></a><nav><a href="#workspace">workspace</a><a href="#memory">memory</a><code>localhost companion</code></nav></header><main><section class="hero"><p class="eyebrow">SOURCE-GROUNDED REPOSITORY INTELLIGENCE</p><h1>Ask the codebase.<br><i>Keep the proof.</i></h1><p class="lede">Clone a public GitHub snapshot locally, index it with your hosted provider, then hand bounded evidence to your browser or MCP-enabled coding agent.</p></section><section class="ingest panel"><label for="repo-url">PUBLIC GITHUB REPOSITORY</label><div class="command"><span>git +</span><input id="repo-url" placeholder="https://github.com/owner/repository" autocomplete="url"><input id="repo-ref" placeholder="ref (optional)"><button id="index">INDEX SNAPSHOT</button></div><p id="provider" class="status">Checking companion configuration…</p></section><section id="workspace" class="grid"><aside class="panel"><div class="panel-title">INDEXED SNAPSHOTS <button id="refresh" class="tiny">REFRESH</button></div><div id="repos" class="repo-list">No snapshots yet.</div></aside><section class="panel question"><div class="panel-title">ASK WITH EVIDENCE</div><textarea id="question" placeholder="What handles request routing?" disabled></textarea><button id="ask" disabled>BUILD CONTEXT PACK</button><p id="question-status" class="status">Select a ready snapshot to query.</p><div id="answer" class="answer"></div></section></section><section id="memory" class="grid lower"><section class="panel"><div class="panel-title">SECOND BRAIN / SESSION</div><p id="session">A context pack creates an explicit repository-and-commit-scoped session. It never crosses snapshots.</p><textarea id="note" placeholder="Remember a reviewed decision…" disabled></textarea><button id="remember" disabled>REMEMBER</button></section><section class="panel"><div class="panel-title">MCP CONNECTION</div><p>Use the same context and session contract over Streamable HTTP.</p><code class="mcp-url">http://127.0.0.1:7788/mcp</code><p class="muted">Tools: list repositories, ingest, status, get context, remember, inspect and clear application memory.</p></section></section></main><footer>Local companion · citations include path, lines, commit and excerpt hash · Python graph extraction; other files are not represented as complete structure.</footer><script src="/app.js"></script></body></html>
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Cornifer — repository workspace</title>
+  <link rel="stylesheet" href="/styles.css?v=workspace-2">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/" aria-label="Cornifer workspace"><span class="brand-mark">c.</span><span>CORNIFER</span></a>
+    <div class="top-context"><span class="pulse"></span><span id="connection">connecting to local index</span></div>
+    <button id="copy-mcp" class="quiet-button" type="button" title="Copy MCP endpoint">MCP <span aria-hidden="true">↗</span></button>
+  </header>
+  <main class="shell">
+    <aside class="rail" aria-label="Repository navigation">
+      <section class="rail-section">
+        <div class="section-heading"><h2>Repositories</h2><button id="refresh" class="icon-button" aria-label="Refresh repositories" title="Refresh">↻</button></div>
+        <form id="ingest-form" class="add-repo">
+          <label for="repo-url">Add public GitHub repository</label>
+          <input id="repo-url" type="url" placeholder="https://github.com/org/repo" autocomplete="url" required>
+          <div class="ref-row"><input id="repo-ref" type="text" placeholder="Branch, tag, or commit (optional)" aria-label="Git ref, optional"><button id="index" type="submit" aria-label="Index repository">＋</button></div>
+          <p id="provider" class="inline-status" role="status">Checking hosted embedding setup…</p>
+        </form>
+        <div id="repos" class="repo-list" aria-live="polite"><p class="empty-state">No indexed snapshots yet.</p></div>
+      </section>
+      <section id="files-section" class="rail-section file-section" hidden>
+        <div class="section-heading"><h2>Files & symbols</h2><span id="catalog-count" class="count"></span></div>
+        <label class="search-box"><span aria-hidden="true">⌕</span><input id="catalog-search" type="search" placeholder="Find file or symbol…" autocomplete="off"></label>
+        <div id="file-list" class="file-list" role="tree" aria-label="Indexed source files"></div>
+      </section>
+      <div class="rail-foot"><span class="python-dot"></span><span>Structural graph: Python</span><button id="coverage-info" class="help-button" aria-label="About language coverage" title="Structural extraction currently supports Python">?</button></div>
+    </aside>
+
+    <section class="workbench" aria-label="Repository explorer">
+      <div id="welcome" class="welcome-state">
+        <div class="welcome-symbol" aria-hidden="true">⌘</div>
+        <p class="kicker">A SOURCE GROUNDED CODE MAP</p>
+        <h1>Explore the shape<br>of your codebase.</h1>
+        <p>Add a public GitHub repository to create a pinned snapshot. Search its files, follow real symbol relationships, and ask questions with source citations.</p>
+        <p class="welcome-hint"><kbd>⌘</kbd> <kbd>K</kbd> focuses search <span>·</span> select a snapshot to begin</p>
+      </div>
+      <div id="workspace" class="workspace" hidden>
+        <div class="repo-header">
+          <div class="crumb"><span id="repo-name">repository</span><span class="slash">/</span><span id="commit" class="commit"></span></div>
+          <div class="repo-meta"><span id="repo-status" class="status-chip">ready</span><span id="snapshot-counts"></span></div>
+        </div>
+        <div class="explorer-toolbar">
+          <div class="view-tabs" role="tablist" aria-label="Explorer view">
+            <button id="graph-tab" class="view-tab active" role="tab" aria-selected="true">Graph</button>
+            <button id="source-tab" class="view-tab" role="tab" aria-selected="false">Source</button>
+          </div>
+          <div class="graph-controls" id="graph-controls">
+            <label class="filter-label" for="edge-filter">Relationships</label>
+            <select id="edge-filter" aria-label="Filter relationship types"><option value="all">All types</option><option value="calls">Calls</option><option value="imports">Imports</option><option value="inherits">Inherits</option><option value="implements">Implements</option></select>
+            <button id="zoom-out" class="icon-button" title="Zoom out" aria-label="Zoom out">−</button><button id="zoom-in" class="icon-button" title="Zoom in" aria-label="Zoom in">＋</button><button id="fit-graph" class="icon-button" title="Fit graph to view" aria-label="Fit graph to view">⌗</button>
+          </div>
+        </div>
+        <div class="explorer-grid">
+          <section class="graph-panel" aria-label="Symbol relationship graph">
+            <div id="graph-empty" class="graph-empty" hidden><span class="empty-icon">◎</span><strong>No structural graph in this snapshot</strong><p>The indexed files have no Python symbols to map. Search and ask over indexed text below.</p></div>
+            <svg id="graph" viewBox="0 0 1000 700" role="img" aria-label="Interactive graph of indexed Python symbols" tabindex="0"><g id="graph-world"></g></svg>
+            <div class="graph-legend"><span><i class="legend-dot module"></i>module</span><span><i class="legend-dot class"></i>class</span><span><i class="legend-dot function"></i>function</span><span class="graph-help">Drag to pan · scroll to zoom</span></div>
+            <div id="node-card" class="node-card" hidden></div>
+          </section>
+          <aside class="inspector" aria-label="Selected symbol details">
+            <div class="inspector-head"><span>INSPECTOR</span><span id="node-kind" class="kind-pill">Select a node</span></div>
+            <div id="inspector-content" class="inspector-content"><div class="inspector-blank"><span>↖</span><p>Select a symbol in the graph or a file in the sidebar to inspect its source and relationships.</p></div></div>
+          </aside>
+        </div>
+        <section class="source-panel" id="source-panel" hidden aria-label="Source preview">
+          <div class="source-heading"><div><span class="source-path" id="source-path">Select a file</span><span id="source-range" class="source-range"></span></div><button id="source-close" class="icon-button" aria-label="Close source view">×</button></div>
+          <pre id="source-code" class="source-code"><code></code></pre>
+        </section>
+        <section class="coverage-note" id="coverage-note" hidden><span>i</span><p><strong>Structural coverage is language specific.</strong> Python files have symbol and relationship data. Other indexed files can appear in text retrieval, but do not have structural nodes or edges.</p></section>
+      </div>
+    </section>
+
+    <aside class="assistant-rail" aria-label="Evidence and memory">
+      <section class="ask-panel">
+        <div class="assistant-heading"><div><span class="assistant-mark">✳</span><h2>Ask Cornifer</h2></div><span id="chat-badge" class="config-badge">checking</span></div>
+        <p class="panel-copy">Retrieve relevant source with citations from the selected snapshot.</p>
+        <form id="ask-form">
+          <label class="sr-only" for="question">Ask a question about the repository</label>
+          <textarea id="question" placeholder="Where is request routing handled?" disabled rows="3"></textarea>
+          <div class="ask-actions"><span class="shortcut-hint"><kbd>↵</kbd> to search</span><button id="ask" type="submit" disabled>Search <span aria-hidden="true">→</span></button></div>
+        </form>
+        <p id="question-status" class="inline-status" role="status">Choose a ready snapshot to search.</p>
+        <div id="answer" class="answer" aria-live="polite"></div>
+      </section>
+      <section class="memory-panel">
+        <div class="section-heading"><div><span class="memory-mark">◷</span><h2>Session memory</h2></div><button id="clear-session" class="text-button" disabled>Clear</button></div>
+        <p id="session" class="panel-copy">Search or ask a question to start a repository and commit scoped session.</p>
+        <div id="memory-events" class="memory-events"></div>
+        <form id="remember-form" hidden>
+          <label class="sr-only" for="note">Save a note to this session</label>
+          <textarea id="note" rows="2" maxlength="2000" placeholder="Save a decision or reminder…"></textarea>
+          <button id="remember" type="submit" disabled>Save note</button>
+        </form>
+      </section>
+      <section class="connection-panel">
+        <div class="section-heading"><h2>MCP connection</h2><span class="local-tag">LOCAL</span></div>
+        <p>Connect an MCP client to the same repository context and session tools.</p>
+        <button class="endpoint" id="mcp-endpoint" type="button"><code>http://127.0.0.1:7791/mcp</code><span aria-label="Copy">▢</span></button>
+        <p id="copy-status" class="copy-status" aria-live="polite">Streamable HTTP · keys stay in this process</p>
+      </section>
+      <div class="privacy-note"><span class="lock-mark">▣</span><span>Local workspace<br>Hosted services are only called when configured.</span></div>
+    </aside>
+  </main>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <script src="/app.js?v=workspace-2"></script>
+</body>
+</html>

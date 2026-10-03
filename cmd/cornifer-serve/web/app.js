@@ -1,14 +1,231 @@
-const $=s=>document.querySelector(s); let selected=null, sessionID=null, chatConfigured=false;
-async function api(url,opts={}){const r=await fetch(url,{headers:{'content-type':'application/json'},...opts});const b=await r.json();if(!r.ok)throw Error(b.error||'request failed');return b}
-function status(el,msg){$(el).textContent=msg}
-function renderRepos(repos){const root=$('#repos');root.innerHTML='';if(!repos.length){root.textContent='No snapshots yet.';return}repos.forEach(r=>{const b=document.createElement('button');const name=r.canonical_url.replace('https://github.com/','').replace('.git','');const sha=r.resolved_commit_sha?` · ${r.resolved_commit_sha.slice(0,10)}`:'';b.className='repo '+(selected?.id===r.id?'selected':'');b.innerHTML=`<strong>${name}</strong><small>${r.status}${sha}</small>`;b.onclick=()=>{selected=r;sessionID=null;$('#question').disabled=r.status!=='ready';$('#ask').disabled=r.status!=='ready';status('#question-status',r.status==='ready'?'Ready for cited retrieval.':'Index status: '+r.status);renderRepos(repos)};root.append(b)})}
-async function refresh(){try{renderRepos(await api('/api/repos'))}catch(e){status('#provider',e.message)}}
-async function poll(job){if(!job?.id)return;const tick=async()=>{try{const j=await api('/api/jobs/'+job.id);status('#provider',`${j.phase}: ${j.files_indexed} files · ${j.chunks} chunks`);await refresh();if(j.cancellable||['queued','cloning','resolving','indexing'].includes(j.phase))setTimeout(tick,1200)}catch(e){status('#provider',e.message)}};tick()}
-$('#index').onclick=async()=>{try{const body={url:$('#repo-url').value,ref:$('#repo-ref').value};const out=await api('/api/repos',{method:'POST',body:JSON.stringify(body)});status('#provider',out.reused?'Existing snapshot selected.':'Index job queued.');selected=out.repository;await refresh();poll(out.job)}catch(e){status('#provider',e.message)}};
-$('#refresh').onclick=refresh;
-function showContext(pack){return pack.evidence.map(e=>`<article id="${e.id}"><code>[${e.id}] ${e.path}:${e.start_line}-${e.end_line}</code><pre>${escapeHTML(e.snippet)}</pre><small>${e.symbol||'module'} · ${e.excerpt_sha256.slice(0,12)}… · ${e.retrieval_sources.join(', ')}</small></article>`).join('')||'<p>No evidence returned.</p>'}
-function linkCitations(text){return escapeHTML(text).replace(/\[(e\d+)\]/g,'<a href="#$1">[$1]</a>')}
-$('#ask').onclick=async()=>{if(!selected)return;const button=$('#ask');button.disabled=true;status('#question-status',chatConfigured?'Generating a cited answer from the bounded context pack…':'Retrieving a cited context pack…');try{const endpoint=chatConfigured?'/api/answer':'/api/context';const out=await api(endpoint,{method:'POST',body:JSON.stringify({repository_id:selected.id,question:$('#question').value,session_id:sessionID})});const pack=chatConfigured?out.answer.context:out.context;sessionID=out.session.id;$('#note').disabled=false;$('#remember').disabled=false;$('#session').textContent=`Session ${sessionID.slice(0,12)}… scoped to ${pack.repository.commit_sha.slice(0,12)}. ${pack.retrieval.degraded?'Lexical retrieval only; hosted embedding query credentials are unavailable.':'Hybrid retrieval active.'}`;const generated=chatConfigured?`<article class="generated"><strong>ANSWER</strong><p>${linkCitations(out.answer.text)}</p></article>`:'';$('#answer').innerHTML=generated+showContext(pack);status('#question-status',chatConfigured?'Answer validated against linked source evidence.':'Context pack is source-cited. Configure hosted chat to generate an answer.')}catch(e){status('#question-status',e.message)}finally{button.disabled=false}};
-$('#remember').onclick=async()=>{try{await api('/api/sessions/'+sessionID+'/remember',{method:'POST',body:JSON.stringify({note:$('#note').value})});$('#note').value='';status('#question-status','Note retained in this snapshot-scoped session.')}catch(e){status('#question-status',e.message)}};
-function escapeHTML(s){return s.replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))}
-(async()=>{try{const h=await api('/api/health');chatConfigured=h.chat_configured;status('#provider',h.embedding_configured?`Hosted embeddings configured (${h.embedding_provider}).`: 'Hosted embedding credentials required before indexing. No local model is used.')}catch(e){status('#provider',e.message)}refresh()})();
+const $ = (selector, root = document) => (typeof root === 'string' ? document.querySelector(root) : root).querySelector(selector);
+const API = async (url, options = {}) => {
+  const response = await fetch(url, {headers: {'content-type': 'application/json'}, ...options});
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload.error || `Request failed (${response.status})`);
+  return payload;
+};
+const state = {repos: [], selected: null, graph: null, nodes: new Map(), edges: [], selectedNode: null, activeFile: '', sessionID: '', chatConfigured: false, embeddingConfigured: false, scale: 1, tx: 0, ty: 0, graphMode: true, jobs: new Map()};
+const MCP_URL = `http://127.0.0.1:${location.port || '7791'}/mcp`;
+const svgNS = 'http://www.w3.org/2000/svg';
+let toastTimer;
+function toast(message) { const el = $('#toast'); el.textContent = message; el.classList.add('visible'); clearTimeout(toastTimer); toastTimer = setTimeout(() => el.classList.remove('visible'), 2200); }
+function setStatus(selector, message, cls = '') { const el = $(selector); el.textContent = message; el.className = `inline-status ${cls}`.trim(); }
+function safeText(value) { return String(value ?? ''); }
+function esc(value) { return safeText(value).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function nameFor(repo) { return (repo.canonical_url || '').replace('https://github.com/', '').replace(/\.git$/, ''); }
+function shortSHA(repo) { return repo.resolved_commit_sha ? repo.resolved_commit_sha.slice(0, 10) : (repo.requested_ref || 'ref pending'); }
+function apiPath(repoID, endpoint) { return `/api/repos/${encodeURIComponent(repoID)}/${endpoint}`; }
+
+async function init() {
+  $('#mcp-endpoint code').textContent = MCP_URL;
+  try {
+    const health = await API('/api/health');
+    state.embeddingConfigured = !!health.embedding_configured;
+    state.chatConfigured = !!health.chat_configured;
+    $('#connection').textContent = 'local companion connected';
+    $('#chat-badge').textContent = state.chatConfigured ? 'hosted chat ready' : 'retrieval only';
+    $('#chat-badge').classList.toggle('configured', state.chatConfigured);
+    $('#chat-badge').classList.toggle('missing', !state.chatConfigured);
+    setStatus('#provider', state.embeddingConfigured ? `Hosted embeddings configured · ${health.embedding_provider}.` : 'Hosted embedding credentials required before indexing. No local inference is used.');
+  } catch (error) {
+    $('#connection').textContent = 'companion unavailable'; $('#topbar')?.classList.add('offline');
+    $('#connection').parentElement.classList.add('offline'); setStatus('#provider', error.message, 'error');
+  }
+  await refreshRepos();
+}
+
+async function refreshRepos() {
+  try {
+    state.repos = (await API('/api/repos')) || [];
+    renderRepos();
+    if (state.selected) {
+      const latest = state.repos.find(repo => repo.id === state.selected.id);
+      if (latest) { state.selected = latest; renderRepositoryStatus(latest); }
+    }
+  } catch (error) { setStatus('#provider', error.message, 'error'); }
+}
+
+function renderRepos() {
+  const root = $('#repos'); root.replaceChildren();
+  if (!state.repos.length) { const p = document.createElement('p'); p.className = 'empty-state'; p.textContent = 'No indexed snapshots yet.'; root.append(p); return; }
+  for (const repo of state.repos) {
+    const wrapper = document.createElement('div'); wrapper.className = 'repo-wrap';
+    const button = document.createElement('button'); button.type = 'button'; button.className = `repo-item${state.selected?.id === repo.id ? ' selected' : ''}`;
+    button.setAttribute('aria-current', state.selected?.id === repo.id ? 'true' : 'false');
+    const title = document.createElement('strong'); title.textContent = nameFor(repo) || 'Repository'; button.append(title);
+    const small = document.createElement('small'); small.className = 'repo-status-line';
+    const dot = document.createElement('i'); dot.className = `state-dot ${repo.status}`; dot.setAttribute('aria-hidden','true');
+    const status = document.createElement('span'); status.textContent = `${repo.status} · ${shortSHA(repo)}`; small.append(dot,status); button.append(small);
+    button.addEventListener('click', () => selectRepository(repo)); wrapper.append(button);
+    const job = state.jobs.get(repo.id);
+    if (job && job.cancellable) {
+      const progress = document.createElement('div'); progress.className = 'repo-progress'; progress.textContent = `${job.phase} · ${job.files_indexed} files · ${job.chunks} chunks`;
+      const cancel = document.createElement('button'); cancel.className = 'cancel-job'; cancel.type = 'button'; cancel.textContent = 'Cancel indexing'; cancel.addEventListener('click', async event => { event.stopPropagation(); try { await API(`/api/jobs/${job.id}/cancel`, {method:'POST',body:'{}'}); toast('Index cancellation requested'); pollJob(repo.id, job.id); } catch (e) { toast(e.message); } }); wrapper.append(progress,cancel);
+    }
+    root.append(wrapper);
+  }
+}
+
+async function selectRepository(repo) {
+  state.selected = repo; state.selectedNode = null; state.activeFile = ''; state.sessionID = '';
+  if (repo.status === 'ready') state.sessionID = readStoredSession(repo.id);
+  state.nodes.clear(); state.edges = []; state.graph = null;
+  $('#welcome').hidden = true; $('#workspace').hidden = false; $('#files-section').hidden = true;
+  $('#answer').replaceChildren(); $('#memory-events').replaceChildren(); $('#remember-form').hidden = true;
+  $('#session').textContent = 'Search or ask a question to start a repository and commit scoped session.';
+  $('#clear-session').disabled = !state.sessionID; $('#question').disabled = repo.status !== 'ready'; $('#ask').disabled = repo.status !== 'ready';
+  $('#repo-name').textContent = nameFor(repo); $('#commit').textContent = shortSHA(repo); $('#snapshot-counts').textContent = '';
+  renderRepositoryStatus(repo); renderRepos();
+  $('#node-kind').textContent = 'Select a node'; $('#inspector-content').innerHTML = '<div class="inspector-blank"><span>↖</span><p>Select a symbol in the graph or a file in the sidebar to inspect its source and relationships.</p></div>';
+  $('#graph').hidden = true; $('#graph-empty').hidden = true;
+  if (repo.status !== 'ready') { showRepoState(repo); return; }
+  try {
+    const graph = await API(apiPath(repo.id, 'graph'));
+    if (state.selected?.id !== repo.id) return;
+    state.graph = graph; state.nodes = new Map(graph.nodes.map(node => [node.id,node])); state.edges = graph.edges;
+    $('#files-section').hidden = false; $('#coverage-note').hidden = false;
+    $('#catalog-count').textContent = `${graph.files.length} files · ${graph.nodes.length} symbols`;
+    renderFileList(); drawGraph();
+    $('#snapshot-counts').textContent = `${graph.nodes.length} symbols · ${graph.edges.length} relations`;
+    $('#graph').hidden = graph.nodes.length === 0; $('#graph-empty').hidden = graph.nodes.length > 0;
+  } catch (error) { showRepoState({...repo, safe_message:error.message, status:'failed'}); }
+  $('#question').disabled = false; $('#ask').disabled = false;
+  if (state.sessionID) await loadSession();
+  setStatus('#question-status', state.chatConfigured ? 'Hosted chat can generate an answer with linked source evidence.' : 'Cited retrieval is ready. Hosted chat is separate and not configured.');
+}
+
+function renderRepositoryStatus(repo) {
+  const fixture = repo.safe_message?.startsWith('Verification fixture:');
+  $('#repo-status').textContent = fixture ? `${repo.status} · fixture` : repo.status;
+  $('#repo-status').classList.toggle('status-error', ['failed','awaiting_credentials'].includes(repo.status));
+}
+function showRepoState(repo) {
+  $('#graph').hidden = true; $('#graph-empty').hidden = false; $('#graph-empty').innerHTML = `<span class="empty-icon">${repo.status === 'failed' ? '!' : '…'}</span><strong>${esc(repo.status.replaceAll('_',' '))}</strong><p>${esc(repo.safe_message || statusMessage(repo.status))}</p>`;
+  $('#snapshot-counts').textContent = '';
+  if (repo.status === 'awaiting_credentials') setStatus('#provider','Hosted embedding credentials are required; indexing paused without local inference.','error');
+  $('#question').disabled = true; $('#ask').disabled = true;
+}
+function statusMessage(status) { return ({queued:'Waiting for the index worker.',cloning:'Cloning the selected GitHub ref.',resolving:'Resolving source relationships.',indexing:'Building the repository snapshot.',awaiting_credentials:'Configure a hosted embedding provider, then submit this repository again.',failed:'The snapshot could not be indexed. Check configuration and retry.',cancelled:'Indexing was cancelled. Submit again to retry.'})[status] || 'Snapshot is not ready yet.'; }
+
+$('#ingest-form').addEventListener('submit', async event => {
+  event.preventDefault(); const button = $('#index'); button.disabled = true;
+  try {
+    const result = await API('/api/repos',{method:'POST',body:JSON.stringify({url:$('#repo-url').value.trim(),ref:$('#repo-ref').value.trim()})});
+    state.selected = result.repository; if (result.job?.id) state.jobs.set(result.repository.id,result.job);
+    await refreshRepos(); await selectRepository(state.repos.find(r=>r.id===result.repository.id)||result.repository);
+    if (result.reused) toast('Existing repository job selected'); else toast('Index job queued');
+    if (result.job?.id) pollJob(result.repository.id,result.job.id);
+  } catch(error) { setStatus('#provider',error.message,'error'); }
+  finally { button.disabled = false; }
+});
+$('#refresh').addEventListener('click', refreshRepos);
+
+async function pollJob(repoID, jobID) {
+  try {
+    const job = await API(`/api/jobs/${encodeURIComponent(jobID)}`); state.jobs.set(repoID,job); renderRepos();
+    if (state.selected?.id === repoID) {
+      $('#repo-status').textContent = job.phase; $('#snapshot-counts').textContent = `${job.files_indexed} / ${job.files_seen} files · ${job.chunks} chunks · ${job.edges} edges`;
+      $('#graph').hidden = true; $('#graph-empty').hidden = false; $('#graph-empty').innerHTML = `<span class="empty-icon">${job.phase === 'failed' ? '!' : '◌'}</span><strong>${esc(job.phase.replaceAll('_',' '))}</strong><p>${esc(job.safe_message || `${job.files_indexed} files indexed · ${job.chunks} chunks · ${job.edges} relations`)}</p>`;
+      $('#question').disabled = true; $('#ask').disabled = true;
+    }
+    await refreshRepos();
+    if (job.cancellable || ['queued','cloning','resolving','indexing'].includes(job.phase)) setTimeout(()=>pollJob(repoID,jobID),1100);
+    else if (['ready','awaiting_credentials','failed','cancelled'].includes(job.phase)) {
+      const repo=state.repos.find(r=>r.id===repoID); if(repo&&state.selected?.id===repoID) selectRepository(repo);
+    }
+  } catch(error) { if(state.selected?.id===repoID) setStatus('#question-status',error.message,'error'); }
+}
+
+function renderFileList(filterText = $('#catalog-search').value.toLowerCase()) {
+  const root = $('#file-list'); root.replaceChildren(); if(!state.graph)return;
+  const files=state.graph.files.filter(path=>path.toLowerCase().includes(filterText));
+  const fragment=document.createDocumentFragment();
+  for(const path of files){
+    const item=document.createElement('button');item.type='button';item.className=`file-row${state.activeFile===path?' active':''}`;item.setAttribute('role','treeitem');item.title=path;
+    item.innerHTML='<span class="file-icon" aria-hidden="true">▤</span>';item.append(document.createTextNode(path));item.addEventListener('click',()=>openFile(path));fragment.append(item);
+    const symbols=[...state.nodes.values()].filter(node=>node.path===path&&(`${node.name} ${node.qualified_name}`.toLowerCase().includes(filterText)));
+    for(const node of symbols){const row=document.createElement('button');row.type='button';row.className=`symbol-row${state.selectedNode?.id===node.id?' active':''}`;row.setAttribute('role','treeitem');row.title=`${node.qualified_name} · ${node.kind}`;row.innerHTML=`<span class="symbol-kind">${esc(kindGlyph(node.kind))}</span>${esc(node.name)}`;row.addEventListener('click',()=>selectNode(node.id));fragment.append(row);}
+  }
+  if(!files.length){const empty=document.createElement('p');empty.className='empty-state';empty.textContent='No matching files or symbols.';fragment.append(empty);}
+  root.append(fragment);
+}
+function kindGlyph(kind){return({module:'M',class:'C',function:'ƒ',method:'ƒ',variable:'v'})[kind]||'·';}
+$('#catalog-search').addEventListener('input',event=>renderFileList(event.target.value.toLowerCase()));
+$('#catalog-search').addEventListener('keydown',event=>{if(event.key==='Enter'){const first=$('#file-list button');first?.click();}});
+
+function filteredEdges(){const kind=$('#edge-filter').value;return state.edges.filter(edge=>kind==='all'||edge.kind===kind);}
+function drawGraph(){
+  const svg=$('#graph'),world=$('#graph-world');world.replaceChildren(); if(!state.graph||!state.graph.nodes.length)return;
+  let defs=$('defs',svg);if(!defs){defs=document.createElementNS(svgNS,'defs');const marker=document.createElementNS(svgNS,'marker');marker.setAttribute('id','edge-arrow');marker.setAttribute('viewBox','0 0 10 10');marker.setAttribute('refX','9');marker.setAttribute('refY','5');marker.setAttribute('markerWidth','4');marker.setAttribute('markerHeight','4');marker.setAttribute('orient','auto-start-reverse');const arrow=document.createElementNS(svgNS,'path');arrow.setAttribute('d','M 0 0 L 10 5 L 0 10 z');arrow.setAttribute('fill','#665c54');marker.append(arrow);defs.append(marker);svg.insertBefore(defs,world);}
+  const nodes=[...state.nodes.values()];
+  const count=nodes.length, cx=500,cy=350, radius=Math.min(275,Math.max(125,Math.sqrt(count)*19));
+  const positions=new Map();
+  nodes.forEach((node,index)=>{const angle=(index/count)*Math.PI*2-Math.PI/2;positions.set(node.id,{x:cx+Math.cos(angle)*radius,y:cy+Math.sin(angle)*radius});});
+  for(const edge of filteredEdges()){
+    const a=positions.get(edge.source),b=positions.get(edge.target);if(!a||!b)continue;
+    const line=document.createElementNS(svgNS,'line');line.setAttribute('x1',a.x);line.setAttribute('y1',a.y);line.setAttribute('x2',b.x);line.setAttribute('y2',b.y);line.setAttribute('class',`edge ${edge.kind}`);line.setAttribute('marker-end','url(#edge-arrow)');line.dataset.source=edge.source;line.dataset.target=edge.target;world.append(line);
+  }
+  nodes.forEach(node=>{
+    const point=positions.get(node.id),group=document.createElementNS(svgNS,'g');group.setAttribute('class',`node ${node.kind}${state.selectedNode?.id===node.id?' selected':''}`);group.setAttribute('transform',`translate(${point.x} ${point.y})`);group.setAttribute('tabindex','0');group.setAttribute('role','button');group.setAttribute('aria-label',`${node.kind} ${node.qualified_name} at ${node.path}:${node.start_line}`);group.dataset.id=node.id;
+    const circle=document.createElementNS(svgNS,'circle');circle.setAttribute('r',node.kind==='module'?8:6);group.append(circle);
+    const label=document.createElementNS(svgNS,'text');label.setAttribute('x','10');label.setAttribute('y','3');label.textContent=node.name.length>23?`${node.name.slice(0,21)}…`:node.name;group.append(label);
+    group.addEventListener('click',()=>selectNode(node.id));group.addEventListener('keydown',event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();selectNode(node.id);}});world.append(group);
+  });
+  applyTransform();
+}
+function applyTransform(){ $('#graph-world').setAttribute('transform',`translate(${state.tx} ${state.ty}) scale(${state.scale})`); }
+function zoom(delta, x=500,y=350){const old=state.scale;state.scale=Math.max(.45,Math.min(3.2,state.scale+delta));const k=state.scale/old;state.tx=x-(x-state.tx)*k;state.ty=y-(y-state.ty)*k;applyTransform();}
+$('#zoom-in').addEventListener('click',()=>zoom(.2));$('#zoom-out').addEventListener('click',()=>zoom(-.2));$('#fit-graph').addEventListener('click',()=>{state.scale=1;state.tx=0;state.ty=0;applyTransform();});$('#edge-filter').addEventListener('change',drawGraph);
+const graphSVG=$('#graph');let drag=null;
+graphSVG.addEventListener('pointerdown',event=>{if(event.target.closest('.node'))return;drag={x:event.clientX,y:event.clientY,tx:state.tx,ty:state.ty};graphSVG.classList.add('panning');graphSVG.setPointerCapture(event.pointerId);});
+graphSVG.addEventListener('pointermove',event=>{if(!drag)return;state.tx=drag.tx+(event.clientX-drag.x);state.ty=drag.ty+(event.clientY-drag.y);applyTransform();});
+graphSVG.addEventListener('pointerup',()=>{drag=null;graphSVG.classList.remove('panning');});
+graphSVG.addEventListener('wheel',event=>{event.preventDefault();zoom(event.deltaY<0?.08:-.08,event.offsetX,event.offsetY);},{passive:false});
+
+async function selectNode(id){const node=state.nodes.get(id);if(!node)return;state.selectedNode=node;state.activeFile=node.path;renderFileList();drawGraph();$('#node-kind').textContent=node.kind;
+  const incident=state.edges.filter(edge=>edge.source===id||edge.target===id);const related=incident.map(edge=>({edge,node:state.nodes.get(edge.source===id?edge.target:edge.source),direction:edge.source===id?'→':'←'})).filter(item=>item.node);
+  $('#inspector-content').innerHTML=`<h3 class="symbol-title">${esc(node.name)}</h3><p class="symbol-qualified">${esc(node.qualified_name)}</p><a class="symbol-location" href="#source-panel" data-source-path="${esc(node.path)}" data-line="${node.start_line}">${esc(node.path)}:${node.start_line}–${node.end_line} ↗</a>${node.signature?`<pre class="signature">${esc(node.signature)}</pre>`:''}<button class="text-button open-source" type="button">Open source</button><h4 class="inspector-subhead">Relationships · ${related.length}</h4>${related.slice(0,60).map(item=>`<button class="relation-link" data-node="${esc(item.node.id)}"><span>${item.direction} ${esc(item.node.name)}</span><small>${esc(item.edge.kind)}</small></button>`).join('')||'<p class="panel-copy">No resolved relationships for this symbol.</p>'}`;
+  $('.open-source','#inspector-content').addEventListener('click',()=>openFile(node.path,node.start_line,node.end_line));
+  $$('.relation-link','#inspector-content').forEach(button=>button.addEventListener('click',()=>selectNode(button.dataset.node)));
+  $('.symbol-location','#inspector-content').addEventListener('click',event=>{event.preventDefault();openFile(node.path,node.start_line,node.end_line);});
+  await openFile(node.path,node.start_line,node.end_line,false);
+}
+function $$(selector,root=document){root=typeof root==='string'?document.querySelector(root):root;return [...root.querySelectorAll(selector)];}
+async function openFile(path,start=1,end=80,showSourceTab=true){if(!state.selected)return;state.activeFile=path;renderFileList();
+  try{const query=new URLSearchParams({path,start:String(Math.max(1,start)),end:String(Math.max(start,end))});const source=await API(`${apiPath(state.selected.id,'source')}?${query}`);$('#source-panel').hidden=false;$('#source-path').textContent=source.path;$('#source-range').textContent=`lines ${source.start_line}–${source.end_line} · ${source.language}`;const code=$('#source-code code');code.replaceChildren();code.textContent=source.content.split('\n').map((line,index)=>`${source.start_line+index}`.padStart(4,' ')+'  '+line).join('\n');if(showSourceTab)setView('source');}
+  catch(error){toast(`Could not open source: ${error.message}`);}
+}
+$('#source-close').addEventListener('click',()=>$('#source-panel').hidden=true);
+function setView(mode){state.graphMode=mode==='graph';$('#graph-tab').classList.toggle('active',state.graphMode);$('#graph-tab').setAttribute('aria-selected',String(state.graphMode));$('#source-tab').classList.toggle('active',!state.graphMode);$('#source-tab').setAttribute('aria-selected',String(!state.graphMode));$('#graph-controls').hidden=!state.graphMode;$('.explorer-grid').hidden=!state.graphMode;$('#source-panel').hidden=state.graphMode||!state.activeFile;$('#source-panel').classList.toggle('standalone',!state.graphMode);}
+$('#graph-tab').addEventListener('click',()=>setView('graph'));$('#source-tab').addEventListener('click',()=>{setView('source');if(state.activeFile)openFile(state.activeFile,1,100,false);});
+
+$('#ask-form').addEventListener('submit',async event=>{event.preventDefault();if(!state.selected||!$('#question').value.trim())return;const button=$('#ask');button.disabled=true;$('#answer').innerHTML='<p class="answer-state">Retrieving indexed evidence…</p>';setStatus('#question-status',state.chatConfigured?'Preparing a cited response using hosted chat…':'Searching indexed text with citations…');
+  try{const endpoint=state.chatConfigured?'/api/answer':'/api/context';const output=await API(endpoint,{method:'POST',body:JSON.stringify({repository_id:state.selected.id,question:$('#question').value.trim(),session_id:state.sessionID})});const pack=state.chatConfigured?output.answer.context:output.context;state.sessionID=output.session.id;storeSession(state.selected.id,state.sessionID);renderSession(output.session,[]);
+    const generated=state.chatConfigured?`<p class="answer-intro">${linkCitations(output.answer.text)}</p>`:'';const degraded=pack.retrieval.degraded?'<p class="answer-state">Lexical retrieval only · no hosted embedding query credentials are available.</p>':'';
+    const evidences=pack.evidence.map(e=>`<article class="evidence"><div class="evidence-head"><a class="citation-link" href="#source-panel" data-path="${esc(e.path)}" data-start="${e.start_line}" data-end="${e.end_line}">[${esc(e.id)}] ${esc(e.path)}:${e.start_line}–${e.end_line}</a><span class="evidence-symbol">${esc(e.symbol||'module')}</span></div><pre>${esc(e.snippet)}</pre><small class="evidence-meta">${esc((e.retrieval_sources||[]).join(' · '))} · SHA ${esc((e.excerpt_sha256||'').slice(0,12))}</small></article>`).join('');
+    $('#answer').innerHTML=`${generated}${degraded}${evidences||'<p class="answer-state">No evidence matched this question in the selected snapshot.</p>'}`;
+    $$('.citation-link','#answer').forEach(link=>link.addEventListener('click',event=>{event.preventDefault();openFile(link.dataset.path,Number(link.dataset.start),Number(link.dataset.end));}));
+    $$('.inline-citation','#answer').forEach(link=>link.addEventListener('click',event=>{event.preventDefault();const citation=pack.evidence.find(item=>item.id===link.dataset.citation);if(citation)openFile(citation.path,citation.start_line,citation.end_line);}));
+    setStatus('#question-status',state.chatConfigured?'Answer linked to retrieved source evidence.':'Context pack ready · configure hosted chat separately to generate an answer.');
+    await loadSession();
+  }catch(error){$('#answer').innerHTML=`<p class="answer-state error">${esc(error.message)}</p>`;setStatus('#question-status',error.message,'error');}
+  finally{button.disabled=false;}
+});
+$('#question').addEventListener('keydown',event=>{if(event.key==='Enter'&&!event.shiftKey&&!event.isComposing){event.preventDefault();$('#ask-form').requestSubmit();}});
+function linkCitations(text){const escaped=esc(text);return escaped.replace(/\[(e\d+)\]/g,'<a class="citation-link inline-citation" href="#source-panel" data-citation="$1">[$1]</a>');}
+
+function sessionStorageKey(repoID){return `cornifer-session:${repoID}`;}
+function readStoredSession(repoID){try{return localStorage.getItem(sessionStorageKey(repoID))||'';}catch{return '';}}
+function storeSession(repoID,sessionID){try{localStorage.setItem(sessionStorageKey(repoID),sessionID);}catch{}}
+function forgetStoredSession(repoID){try{localStorage.removeItem(sessionStorageKey(repoID));}catch{}}
+async function loadSession(){if(!state.sessionID)return;try{const out=await API(`/api/sessions/${encodeURIComponent(state.sessionID)}`);if(out.session.repository_id!==state.selected?.id||out.session.commit_sha!==state.selected?.resolved_commit_sha||out.session.stale||Date.parse(out.session.expires_at)<=Date.now()){forgetStoredSession(state.selected?.id);state.sessionID='';$('#clear-session').disabled=true;return;}renderSession(out.session,out.events||[]);}catch(error){forgetStoredSession(state.selected?.id);state.sessionID='';$('#clear-session').disabled=true;setStatus('#question-status',error.message,'error');}}
+function renderSession(session,events){$('#remember-form').hidden=false;$('#remember').disabled=false;$('#clear-session').disabled=false;$('#session').textContent=`${session.commit_sha.slice(0,10)} · this snapshot only · expires ${new Date(session.expires_at).toLocaleDateString()}`;const root=$('#memory-events');root.replaceChildren();for(const event of [...events].reverse()){const row=document.createElement('div');row.className='memory-event';const date=document.createElement('small');date.textContent=new Date(event.created_at).toLocaleString();const payload=event.payload;const body=event.kind==='note'?(payload?.note||''):`Searched: ${payload?.question||payload?.context?.query||'repository context'}`;row.append(date,document.createTextNode(body));root.append(row);}}
+$('#remember-form').addEventListener('submit',async event=>{event.preventDefault();if(!state.sessionID)return;try{await API(`/api/sessions/${encodeURIComponent(state.sessionID)}/remember`,{method:'POST',body:JSON.stringify({note:$('#note').value})});$('#note').value='';toast('Note saved to this session');await loadSession();}catch(error){setStatus('#question-status',error.message,'error');}});
+$('#clear-session').addEventListener('click',async()=>{if(!state.sessionID)return;try{await API(`/api/sessions/${encodeURIComponent(state.sessionID)}`,{method:'DELETE'});forgetStoredSession(state.selected?.id);state.sessionID='';$('#memory-events').replaceChildren();$('#remember-form').hidden=true;$('#clear-session').disabled=true;$('#session').textContent='Session memory cleared.';toast('Session memory cleared');}catch(error){toast(error.message);}});
+
+async function copyMCP(){try{await navigator.clipboard.writeText(MCP_URL);$('#copy-status').textContent='MCP endpoint copied to clipboard';toast('MCP endpoint copied');}catch{const input=document.createElement('textarea');input.value=MCP_URL;document.body.append(input);input.select();document.execCommand('copy');input.remove();$('#copy-status').textContent='MCP endpoint copied to clipboard';toast('MCP endpoint copied');}}
+$('#copy-mcp').addEventListener('click',copyMCP);$('#mcp-endpoint').addEventListener('click',copyMCP);
+$('#coverage-info').addEventListener('click',()=>toast('Python has structural symbols and edges. Other indexed languages are text retrieval only.'));
+document.addEventListener('keydown',event=>{if((event.metaKey||event.ctrlKey)&&event.key.toLowerCase()==='k'){event.preventDefault();$('#catalog-search').focus();$('#files-section').hidden=false;}if(event.key==='Escape'&&document.activeElement===$('#catalog-search')){$('#catalog-search').blur();}});
+init();

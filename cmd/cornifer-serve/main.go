@@ -41,7 +41,7 @@ func main() {
 	defer product.Close()
 	runtime := companion.RuntimeConfigFromEnv()
 	service := companion.NewService(product, companion.LocalRunner{Engine: engine, Config: runtime}, companion.EngineContextBuilder{Engine: engine, Config: runtime})
-	app := companion.HTTPHandler(service, runtime)
+	app := companion.HTTPHandler(service, runtime, companion.Explorer{Engine: engine})
 	assets, err := fs.Sub(web, "web")
 	if err != nil {
 		log.Fatal(err)
