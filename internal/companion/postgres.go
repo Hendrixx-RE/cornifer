@@ -90,11 +90,23 @@ func scanRepo(row pgx.Row) (Repository, error) {
 const repoColumns = `id, canonical_url, requested_ref, resolved_commit_sha, checkout_path, cache_dir, engine_repo_id, status, capabilities, error_code, safe_message, index_version, provider_fingerprint, created_at, updated_at`
 
 func (s *PostgresStore) UpsertRepository(ctx context.Context, in Repository) (Repository, bool, error) {
+	// An explicit resubmission claims a credential-blocked snapshot for a new
+	// job. The conditional update is atomic across companion processes; another
+	// submitter sees queued work and receives its existing job instead.
+	requeued, err := scanRepo(s.pool.QueryRow(ctx, `UPDATE companion_repositories SET status=$3,error_code='',safe_message='',updated_at=now()
+		WHERE id=(SELECT id FROM companion_repositories WHERE canonical_url=$1 AND requested_ref=$2 AND status=$4 ORDER BY updated_at DESC LIMIT 1)
+		AND status=$4 RETURNING `+repoColumns, in.CanonicalURL, in.RequestedRef, string(StatusQueued), string(StatusAwaitingCredential)))
+	if err == nil {
+		return requeued, false, nil
+	}
+	if !errors.Is(err, ErrNotFound) {
+		return Repository{}, false, fmt.Errorf("requeue credential-blocked repo: %w", err)
+	}
 	var existing Repository
 	// Only work in progress is deduplicated. A completed record is a pinned
 	// snapshot: ingesting a branch again intentionally creates a fresh row so a
 	// moved ref cannot overwrite old context or memory.
-	existing, err := scanRepo(s.pool.QueryRow(ctx, `SELECT `+repoColumns+` FROM companion_repositories WHERE canonical_url=$1 AND requested_ref=$2 AND status = ANY($3) ORDER BY updated_at DESC LIMIT 1`, in.CanonicalURL, in.RequestedRef, []string{string(StatusQueued), string(StatusCloning), string(StatusResolving), string(StatusIndexing), string(StatusAwaitingCredential)}))
+	existing, err = scanRepo(s.pool.QueryRow(ctx, `SELECT `+repoColumns+` FROM companion_repositories WHERE canonical_url=$1 AND requested_ref=$2 AND status = ANY($3) ORDER BY updated_at DESC LIMIT 1`, in.CanonicalURL, in.RequestedRef, []string{string(StatusQueued), string(StatusCloning), string(StatusResolving), string(StatusIndexing), string(StatusAwaitingCredential)}))
 	if err == nil {
 		return existing, true, nil
 	}

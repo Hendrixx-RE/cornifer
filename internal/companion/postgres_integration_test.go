@@ -4,9 +4,96 @@ import (
 	"context"
 	"errors"
 	"os"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
+
+type blockedRetryRunner struct {
+	started chan Repository
+	release chan struct{}
+	runs    atomic.Int32
+}
+
+func (r *blockedRetryRunner) Run(ctx context.Context, repo Repository, _ func(Progress)) (Repository, error) {
+	r.runs.Add(1)
+	r.started <- repo
+	select {
+	case <-r.release:
+		return repo, ErrCredentialRequired
+	case <-ctx.Done():
+		return repo, ctx.Err()
+	}
+}
+
+// Simulate a credential-blocked job persisted by an earlier server, then an
+// explicit resubmission through a new pool/service. No Git or provider calls.
+func TestPostgresCredentialRetryAfterRestart(t *testing.T) {
+	dsn := os.Getenv("CORNIFER_COMPANION_TEST_DSN")
+	if dsn == "" {
+		t.Skip("set CORNIFER_COMPANION_TEST_DSN to run companion database integration")
+	}
+	ctx := context.Background()
+	store, err := NewPostgresStore(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(store.Close)
+	repo, _, err := store.UpsertRepository(ctx, Repository{CanonicalURL: "https://github.com/cornifer-test/" + newID() + ".git", RequestedRef: "main", Status: StatusAwaitingCredential})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _, _ = store.pool.Exec(ctx, "DELETE FROM companion_repositories WHERE id=$1", repo.ID) })
+	repo.ResolvedCommitSHA = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	repo.ErrorCode, repo.SafeMessage = "embedding_credentials_required", "Hosted embedding credentials are required before indexing."
+	if err := store.UpdateRepository(ctx, repo); err != nil {
+		t.Fatal(err)
+	}
+	oldJob := Job{ID: newID(), RepositoryID: repo.ID, Phase: string(StatusAwaitingCredential)}
+	if err := store.CreateJob(ctx, oldJob); err != nil {
+		t.Fatal(err)
+	}
+	restarted, err := NewPostgresStore(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer restarted.Close()
+	runner := &blockedRetryRunner{started: make(chan Repository, 1), release: make(chan struct{})}
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(runner.release) }) }
+	defer release()
+	service := NewService(restarted, runner, nil)
+	queued, job, reused, err := service.Ingest(ctx, repo.CanonicalURL, repo.RequestedRef)
+	if err != nil || reused || queued.ID != repo.ID || queued.Status != StatusQueued || job.ID == oldJob.ID || job.Phase != string(StatusQueued) {
+		t.Fatalf("retry = repo=%+v job=%+v reused=%v err=%v", queued, job, reused, err)
+	}
+	select {
+	case got := <-runner.started:
+		if got.ResolvedCommitSHA != repo.ResolvedCommitSHA || got.ErrorCode != "" || got.SafeMessage != "" {
+			t.Fatalf("retry lost pin or retained error: %+v", got)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("explicit credential retry did not start runner")
+	}
+	_, duplicate, reused, err := service.Ingest(ctx, repo.CanonicalURL, repo.RequestedRef)
+	if err != nil || !reused || duplicate.ID != job.ID || runner.runs.Load() != 1 {
+		t.Fatalf("active retry duplicate=%+v reused=%v runs=%d err=%v", duplicate, reused, runner.runs.Load(), err)
+	}
+	release()
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		got, err := store.GetRepository(ctx, repo.ID)
+		if err == nil && got.Status == StatusAwaitingCredential {
+			terminal, err := store.GetJob(ctx, job.ID)
+			if err == nil && terminal.Phase == string(StatusAwaitingCredential) && !terminal.Cancellable {
+				return
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("retry without credentials did not return to awaiting_credentials")
+}
 
 // This test is opt-in because the normal unit suite must not require a
 // database. It exercises persistence across two pools, event bounds and the

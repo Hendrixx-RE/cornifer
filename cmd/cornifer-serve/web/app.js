@@ -117,10 +117,10 @@ function renderRepositoryStatus(repo) {
 function showRepoState(repo) {
   $('#graph').hidden = true; $('#graph-empty').hidden = false; $('#graph-empty').innerHTML = `<span class="empty-icon">${repo.status === 'failed' ? '!' : '…'}</span><strong>${esc(repo.status.replaceAll('_',' '))}</strong><p>${esc(repo.safe_message || statusMessage(repo.status))}</p>`;
   $('#snapshot-counts').textContent = '';
-  if (repo.status === 'awaiting_credentials') setStatus('#provider','Hosted embedding credentials are required; indexing paused without local inference.','error');
+  if (repo.status === 'awaiting_credentials') setStatus('#provider','Configure hosted embeddings, restart the server, then submit the same URL and ref to retry the pinned snapshot. No automatic resume.','error');
   $('#question').disabled = true; $('#ask').disabled = true;
 }
-function statusMessage(status) { return ({queued:'Waiting for the index worker.',cloning:'Cloning the selected GitHub ref.',resolving:'Resolving source relationships.',indexing:'Building the repository snapshot.',awaiting_credentials:'Configure a hosted embedding provider, then submit this repository again.',failed:'The snapshot could not be indexed. Check configuration and retry.',cancelled:'Indexing was cancelled. Submit again to retry.'})[status] || 'Snapshot is not ready yet.'; }
+function statusMessage(status) { return ({queued:'Waiting for the index worker.',cloning:'Cloning the selected GitHub ref.',resolving:'Resolving the requested ref to a pinned commit.',indexing:'Building the repository snapshot.',awaiting_credentials:'Configure hosted embeddings, restart the server, then submit the same URL and ref. This creates a new job for the pinned snapshot; it does not resume automatically.',failed:'The snapshot could not be indexed. Check configuration and retry.',cancelled:'Indexing was cancelled. Submit again to retry.'})[status] || 'Snapshot is not ready yet.'; }
 
 $('#ingest-form').addEventListener('submit', async event => {
   event.preventDefault(); const button = $('#index'); button.disabled = true; button.setAttribute('aria-busy','true');

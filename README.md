@@ -91,7 +91,9 @@ matching commit; only the BM25 index is a local cache.
 ## Local companion (website + MCP)
 
 For complete startup, shutdown, and troubleshooting instructions, see
-[Run the Cornifer website locally](docs/local-companion.md). The UI is served
+[Run the Cornifer website locally](docs/local-companion.md) and the
+[detailed user guide](docs/user-guide.md), including current limitations and
+verification status. The UI is served
 by Go and requires no npm setup.
 
 `cornifer-serve` is a localhost-only companion. It accepts public GitHub HTTPS
@@ -126,9 +128,10 @@ Without hosted embedding credentials, indexing enters an explicit
 excerpt hash, retrieval provenance, and graph relationships. Its explicit
 application `session_id` is persisted, bounded, and repo+commit scoped; a
 moved ref receives a separate snapshot rather than overwriting it. Python is the only structural-graph language
-today. The companion also chunks common docs and source-text extensions for
-lexical retrieval, but those files have no symbols or graph edges and must not
-be presented as complete structural coverage.
+today. The companion admits common docs and source-text extensions into its file
+catalog, but generic lexical chunking is currently incomplete (the chunk loop
+selects parsed Python files). Those files have no structural symbols or graph
+edges. See the user guide for current coverage and verification limits.
 
 ## Architecture
 

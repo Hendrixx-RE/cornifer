@@ -116,6 +116,10 @@ func (r LocalRunner) Run(ctx context.Context, repo Repository, progress func(Pro
 	}
 	progress(Progress{Phase: string(StatusResolving), Cancellable: true})
 	ref := repo.RequestedRef
+	// Credential retry keeps the commit already resolved by the original job.
+	if repo.ResolvedCommitSHA != "" {
+		ref = repo.ResolvedCommitSHA
+	}
 	if ref == "" {
 		ref = "HEAD"
 	}

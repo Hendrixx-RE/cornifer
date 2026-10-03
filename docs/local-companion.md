@@ -63,12 +63,17 @@ export CORNIFER_EMBEDDING_API_KEY='your-key'
 go run ./cmd/cornifer-serve
 ```
 
+For a snapshot already in `awaiting_credentials`, reload the page after the
+server restart and submit the same URL and original ref again. This explicitly
+creates a new job for the existing pinned snapshot; there is no automatic resume.
+
 Adding a repository then calls the embedding provider and may incur its
 usage charges. Keep keys in the server environment, never in browser code or
 committed files. Add a public `https://github.com/owner/repository` URL in the
 website, optionally select a branch/tag/commit, and wait for indexing to finish.
-Python has structural graph coverage; other supported file extensions provide
-text retrieval without structural symbols or edges.
+Python has structural graph coverage; other recognized extensions appear in the file catalog without structural
+symbols or edges. Generic lexical chunking is currently incomplete; see the
+user guide for the precise limitation.
 
 Hosted chat is configured independently and is optional. Without it, the Ask
 panel returns cited source evidence instead of generated answers. For chat
@@ -89,3 +94,6 @@ configuration, see the [README companion setup](../README.md#local-companion-web
   in `docker-compose.yml`.
 - Enable your system/browser **Reduce motion** preference to disable interface
   animations and animated graph zoom.
+
+For controls, MCP/session examples, retry limits, and verified completion status,
+see the [Cornifer user guide](user-guide.md).
