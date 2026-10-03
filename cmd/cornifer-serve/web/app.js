@@ -1,4 +1,7 @@
-const $ = (selector, root = document) => (typeof root === 'string' ? document.querySelector(root) : root).querySelector(selector);
+const $ = (selector, root = document) => {
+  const scope = typeof root === 'string' ? document.querySelector(root) : root;
+  return scope?.querySelector?.(selector) || null;
+};
 const API = async (url, options = {}) => {
   const response = await fetch(url, {headers: {'content-type': 'application/json'}, ...options});
   const payload = await response.json().catch(() => ({}));
@@ -155,21 +158,50 @@ $('#catalog-search').addEventListener('input',event=>renderFileList(event.target
 $('#catalog-search').addEventListener('keydown',event=>{if(event.key==='Enter'){const first=$('#file-list button');first?.click();}});
 
 function filteredEdges(){const kind=$('#edge-filter').value;return state.edges.filter(edge=>kind==='all'||edge.kind===kind);}
+function graphSlice(nodes,edges){
+  const limit=100, degree=new Map(nodes.map(node=>[node.id,0])), neighbors=new Map(nodes.map(node=>[node.id,[]]));
+  for(const edge of edges){if(!degree.has(edge.source)||!degree.has(edge.target))continue;degree.set(edge.source,degree.get(edge.source)+1);degree.set(edge.target,degree.get(edge.target)+1);neighbors.get(edge.source).push(edge.target);neighbors.get(edge.target).push(edge.source);}
+  const rank=(a,b)=>(degree.get(b)-degree.get(a))||a.qualified_name.localeCompare(b.qualified_name);
+  const byID=new Map(nodes.map(node=>[node.id,node])),visible=new Set(),seeds=[];
+  if(state.selectedNode?.id&&byID.has(state.selectedNode.id))seeds.push(byID.get(state.selectedNode.id));
+  else seeds.push(...[...nodes].sort(rank).slice(0,18));
+  const add=node=>{if(node&&visible.size<limit&&!visible.has(node.id)){visible.add(node.id);return true;}return false;};
+  seeds.forEach(add);
+  let frontier=seeds;
+  while(frontier.length&&visible.size<limit){const next=[];for(const node of frontier){const candidates=(neighbors.get(node.id)||[]).map(id=>byID.get(id)).filter(Boolean).sort(rank);for(const candidate of candidates)if(add(candidate))next.push(candidate);}frontier=next;}
+  if(visible.size<limit)for(const node of [...nodes].sort(rank))if(!visible.has(node.id))add(node);
+  const visibleNodes=[...visible].map(id=>byID.get(id)).filter(Boolean),labels=new Set();
+  if(state.selectedNode){labels.add(state.selectedNode.id);const focused=neighbors.get(state.selectedNode.id)||[];focused.map(id=>byID.get(id)).filter(Boolean).sort(rank).slice(0,12).forEach(node=>labels.add(node.id));}
+  else [...nodes].sort(rank).slice(0,12).forEach(node=>{if(visible.has(node.id))labels.add(node.id);});
+  return {nodes:visibleNodes,edges:edges.filter(edge=>visible.has(edge.source)&&visible.has(edge.target)),labels,degree};
+}
+function layoutGraph(nodes,edges,selectedID){
+  const points=new Map(),count=nodes.length,cx=500,cy=350,byID=new Map(nodes.map(node=>[node.id,node]));
+  nodes.forEach((node,index)=>{const hash=[...node.id].reduce((sum,char)=>(sum*31+char.charCodeAt(0))>>>0,7),angle=(index/count)*Math.PI*2+(hash%1000)/1000,radius=selectedID?(node.id===selectedID?0:130+(index%4)*24):185+(index%3)*35;points.set(node.id,{x:cx+Math.cos(angle)*radius,y:cy+Math.sin(angle)*radius});});
+  for(let iteration=0;iteration<70;iteration++){
+    const forces=new Map(nodes.map(node=>[node.id,{x:0,y:0}])),temperature=Math.max(1,7*(1-iteration/70));
+    for(let i=0;i<nodes.length;i++)for(let j=i+1;j<nodes.length;j++){
+      const a=nodes[i],b=nodes[j],pa=points.get(a.id),pb=points.get(b.id),dx=pa.x-pb.x,dy=pa.y-pb.y,d2=Math.max(64,dx*dx+dy*dy),force=1400/d2,fa=forces.get(a.id),fb=forces.get(b.id);fa.x+=dx*force;fa.y+=dy*force;fb.x-=dx*force;fb.y-=dy*force;
+    }
+    for(const edge of edges){const a=points.get(edge.source),b=points.get(edge.target);if(!a||!b)continue;const dx=b.x-a.x,dy=b.y-a.y,d=Math.max(1,Math.hypot(dx,dy)),pull=(d-100)*.012,fa=forces.get(edge.source),fb=forces.get(edge.target);fa.x+=dx/d*pull;fa.y+=dy/d*pull;fb.x-=dx/d*pull;fb.y-=dy/d*pull;}
+    for(const node of nodes){if(node.id===selectedID)continue;const p=points.get(node.id),f=forces.get(node.id);f.x+=(cx-p.x)*.003;f.y+=(cy-p.y)*.003;const scale=Math.min(temperature,7/Math.max(1,Math.hypot(f.x,f.y)));p.x=Math.max(25,Math.min(975,p.x+f.x*scale));p.y=Math.max(25,Math.min(675,p.y+f.y*scale));}
+  }
+  return points;
+}
 function drawGraph(){
   const svg=$('#graph'),world=$('#graph-world');world.replaceChildren(); if(!state.graph||!state.graph.nodes.length)return;
-  let defs=$('defs',svg);if(!defs){defs=document.createElementNS(svgNS,'defs');const marker=document.createElementNS(svgNS,'marker');marker.setAttribute('id','edge-arrow');marker.setAttribute('viewBox','0 0 10 10');marker.setAttribute('refX','9');marker.setAttribute('refY','5');marker.setAttribute('markerWidth','4');marker.setAttribute('markerHeight','4');marker.setAttribute('orient','auto-start-reverse');const arrow=document.createElementNS(svgNS,'path');arrow.setAttribute('d','M 0 0 L 10 5 L 0 10 z');arrow.setAttribute('fill','#665c54');marker.append(arrow);defs.append(marker);svg.insertBefore(defs,world);}
-  const nodes=[...state.nodes.values()];
-  const count=nodes.length, cx=500,cy=350, radius=Math.min(275,Math.max(125,Math.sqrt(count)*19));
-  const positions=new Map();
-  nodes.forEach((node,index)=>{const angle=(index/count)*Math.PI*2-Math.PI/2;positions.set(node.id,{x:cx+Math.cos(angle)*radius,y:cy+Math.sin(angle)*radius});});
-  for(const edge of filteredEdges()){
+  let defs=svg.querySelector('defs');if(!defs){defs=document.createElementNS(svgNS,'defs');const marker=document.createElementNS(svgNS,'marker');marker.setAttribute('id','edge-arrow');marker.setAttribute('viewBox','0 0 10 10');marker.setAttribute('refX','9');marker.setAttribute('refY','5');marker.setAttribute('markerWidth','4');marker.setAttribute('markerHeight','4');marker.setAttribute('orient','auto-start-reverse');const arrow=document.createElementNS(svgNS,'path');arrow.setAttribute('d','M 0 0 L 10 5 L 0 10 z');arrow.setAttribute('fill','#665c54');marker.append(arrow);defs.append(marker);svg.insertBefore(defs,world);}
+  const allNodes=[...state.nodes.values()],slice=graphSlice(allNodes,filteredEdges()),nodes=slice.nodes,positions=layoutGraph(nodes,slice.edges,state.selectedNode?.id);
+  $('#graph-slice-status').textContent=state.selectedNode?`Focused · ${nodes.length} nearby symbols`:`Connected slice · ${nodes.length} of ${allNodes.length}`;
+  for(const edge of slice.edges){
     const a=positions.get(edge.source),b=positions.get(edge.target);if(!a||!b)continue;
     const line=document.createElementNS(svgNS,'line');line.setAttribute('x1',a.x);line.setAttribute('y1',a.y);line.setAttribute('x2',b.x);line.setAttribute('y2',b.y);line.setAttribute('class',`edge ${edge.kind}`);line.setAttribute('marker-end','url(#edge-arrow)');line.dataset.source=edge.source;line.dataset.target=edge.target;world.append(line);
   }
   nodes.forEach(node=>{
     const point=positions.get(node.id),group=document.createElementNS(svgNS,'g');group.setAttribute('class',`node ${node.kind}${state.selectedNode?.id===node.id?' selected':''}`);group.setAttribute('transform',`translate(${point.x} ${point.y})`);group.setAttribute('tabindex','0');group.setAttribute('role','button');group.setAttribute('aria-label',`${node.kind} ${node.qualified_name} at ${node.path}:${node.start_line}`);group.dataset.id=node.id;
+    const title=document.createElementNS(svgNS,'title');title.textContent=`${node.qualified_name} · ${node.path}:${node.start_line}`;group.append(title);
     const circle=document.createElementNS(svgNS,'circle');circle.setAttribute('r',node.kind==='module'?8:6);group.append(circle);
-    const label=document.createElementNS(svgNS,'text');label.setAttribute('x','10');label.setAttribute('y','3');label.textContent=node.name.length>23?`${node.name.slice(0,21)}…`:node.name;group.append(label);
+    if(slice.labels.has(node.id)){const label=document.createElementNS(svgNS,'text');label.setAttribute('x','10');label.setAttribute('y','3');label.textContent=node.name.length>23?`${node.name.slice(0,21)}…`:node.name;group.append(label);}
     group.addEventListener('click',()=>selectNode(node.id));group.addEventListener('keydown',event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();selectNode(node.id);}});world.append(group);
   });
   applyTransform();
@@ -186,7 +218,7 @@ graphSVG.addEventListener('wheel',event=>{event.preventDefault();zoom(event.delt
 async function selectNode(id){const node=state.nodes.get(id);if(!node)return;state.selectedNode=node;state.activeFile=node.path;renderFileList();drawGraph();$('#node-kind').textContent=node.kind;
   const incident=state.edges.filter(edge=>edge.source===id||edge.target===id);const related=incident.map(edge=>({edge,node:state.nodes.get(edge.source===id?edge.target:edge.source),direction:edge.source===id?'→':'←'})).filter(item=>item.node);
   $('#inspector-content').innerHTML=`<h3 class="symbol-title">${esc(node.name)}</h3><p class="symbol-qualified">${esc(node.qualified_name)}</p><a class="symbol-location" href="#source-panel" data-source-path="${esc(node.path)}" data-line="${node.start_line}">${esc(node.path)}:${node.start_line}–${node.end_line} ↗</a>${node.signature?`<pre class="signature">${esc(node.signature)}</pre>`:''}<button class="text-button open-source" type="button">Open source</button><h4 class="inspector-subhead">Relationships · ${related.length}</h4>${related.slice(0,60).map(item=>`<button class="relation-link" data-node="${esc(item.node.id)}"><span>${item.direction} ${esc(item.node.name)}</span><small>${esc(item.edge.kind)}</small></button>`).join('')||'<p class="panel-copy">No resolved relationships for this symbol.</p>'}`;
-  $('.open-source','#inspector-content').addEventListener('click',()=>openFile(node.path,node.start_line,node.end_line));
+  $('#inspector-content .open-source').addEventListener('click',()=>openFile(node.path,node.start_line,node.end_line));
   $$('.relation-link','#inspector-content').forEach(button=>button.addEventListener('click',()=>selectNode(button.dataset.node)));
   $('.symbol-location','#inspector-content').addEventListener('click',event=>{event.preventDefault();openFile(node.path,node.start_line,node.end_line);});
   await openFile(node.path,node.start_line,node.end_line,false);

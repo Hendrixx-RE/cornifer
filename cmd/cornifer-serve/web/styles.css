@@ -7,3 +7,5 @@
 #graph-empty[hidden],.graph-panel svg[hidden],.explorer-grid[hidden]{display:none}
 .source-panel.standalone{flex:1;max-height:none;min-height:320px}
 @media(max-width:720px){.add-repo{display:flex;flex-direction:column;align-items:stretch}.add-repo label{align-self:flex-start}.ref-row{width:100%}.ref-row input{display:block}.ref-row button{width:auto;height:auto;flex:none}}
+.graph-slice-status{font-size:8px;color:var(--muted);white-space:nowrap;margin:0 5px}
+@media(max-width:720px){.graph-slice-status{display:none}}

@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark">
   <title>Cornifer — repository workspace</title>
-  <link rel="stylesheet" href="/styles.css?v=workspace-2">
+  <link rel="stylesheet" href="/styles.css?v=workspace-4">
 </head>
 <body>
   <header class="topbar">
@@ -54,6 +54,7 @@
           <div class="graph-controls" id="graph-controls">
             <label class="filter-label" for="edge-filter">Relationships</label>
             <select id="edge-filter" aria-label="Filter relationship types"><option value="all">All types</option><option value="calls">Calls</option><option value="imports">Imports</option><option value="inherits">Inherits</option><option value="implements">Implements</option></select>
+            <span id="graph-slice-status" class="graph-slice-status" aria-live="polite"></span>
             <button id="zoom-out" class="icon-button" title="Zoom out" aria-label="Zoom out">−</button><button id="zoom-in" class="icon-button" title="Zoom in" aria-label="Zoom in">＋</button><button id="fit-graph" class="icon-button" title="Fit graph to view" aria-label="Fit graph to view">⌗</button>
           </div>
         </div>
@@ -109,6 +110,6 @@
     </aside>
   </main>
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
-  <script src="/app.js?v=workspace-2"></script>
+  <script src="/app.js?v=workspace-4"></script>
 </body>
 </html>
