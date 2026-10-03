@@ -9,10 +9,10 @@ server**.
 See [plan.md](plan.md) for the full architecture, phased build plan, and
 design decisions.
 
-The implemented engine is the foundation for a planned website plus callable
-MCP product. The architecture-neutral product roadmap, contracts, acceptance
-criteria, and current browser/companion decision boundary are in
-[docs/product-plan.md](docs/product-plan.md).
+The implemented engine also backs a local companion product: `cornifer-serve`
+hosts a loopback website and Streamable HTTP MCP endpoint over the same
+repository snapshots and cited context packs. The current product contract and
+limitations are in [docs/product-plan.md](docs/product-plan.md).
 
 ## Status
 
@@ -88,6 +88,42 @@ Every read command (`query`, `find-definition`, `callers`, `callees`,
 repo. Structural/catalog data is reloaded directly from Postgres for the
 matching commit; only the BM25 index is a local cache.
 
+## Local companion (website + MCP)
+
+`cornifer-serve` is a localhost-only companion. It accepts public GitHub HTTPS
+URLs, clones a detached commit without running repository code or hooks, and
+keeps provider keys in the Go process rather than browser JavaScript.
+
+```sh
+export CORNIFER_DATABASE_URL='postgres://…/cornifer_hosted?sslmode=disable'
+export CORNIFER_EMBEDDING_DIM=1024
+export CORNIFER_COMPANION_DIR="$PWD/.cornifer-companion"
+
+# Embeddings and chat are independently configured. Voyage is the current
+# hosted embedding adapter; use a new database migrated at its output dimension.
+export CORNIFER_EMBEDDING_PROVIDER=voyage
+export CORNIFER_EMBEDDING_MODEL=voyage-code-3
+export CORNIFER_EMBEDDING_API_KEY='…'
+
+# Optional cited answer generation through an OpenAI-compatible endpoint.
+export CORNIFER_CHAT_PROVIDER=openai_compatible
+export CORNIFER_CHAT_BASE_URL='https://provider.example/v1/chat/completions'
+export CORNIFER_CHAT_MODEL='chosen-small-model'
+export CORNIFER_CHAT_API_KEY='…'
+
+go run ./cmd/migrate up
+go run ./cmd/cornifer-serve
+# Website: http://127.0.0.1:7788  ·  MCP: http://127.0.0.1:7788/mcp
+```
+
+Without hosted embedding credentials, indexing enters an explicit
+`awaiting_credentials` state; it never substitutes fake or local vectors.
+`get_context` returns bounded evidence with commit SHA, normalized path/lines,
+excerpt hash, retrieval provenance, and graph relationships. Its explicit
+application `session_id` is persisted, bounded, repo+commit scoped, and marked
+stale if the tracked ref moves. Python is the only structural-graph language
+today; other language/text coverage must not be presented as complete.
+
 ## Architecture
 
 ```text
@@ -113,6 +149,8 @@ entry points:
 - `cmd/cornifer` — CLI (`index`, `reindex`, `query`, `find-definition`,
   `callers`, `callees`, `blast-radius`, `cycles`, `eval`)
 - `cmd/cornifer-mcp` — MCP server (stdio transport)
+- `cmd/cornifer-serve` — localhost companion website, API, and Streamable HTTP MCP
+- `cmd/cornifer-companion-mcp` — companion registry/context/session MCP over stdio
 - `cmd/migrate` — applies `migrations/` with goose
 - `internal/indexer` — orchestrates the indexing pipeline end to end and
   loads it back for read commands (see `internal/indexer/doc.go`)

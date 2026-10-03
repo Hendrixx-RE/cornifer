@@ -7,17 +7,20 @@ snapshot to a website and callable MCP server. A main coding agent can retrieve
 evidence directly; hosted answer generation is optional rather than a required
 hop for agents.
 
-## First architecture decision
+## Selected architecture: lightweight companion service
 
-The phrase "client-side clone" is unresolved and changes the implementation:
+The user selected a lightweight companion service. The local Go process owns
+cloning, indexing, PostgreSQL access, credentials, website and MCP transport;
+the website is a loopback client and never sees provider keys. Browser-only is
+out of scope because it requires a different parsing, storage, and credential
+model.
 
 | Option | What runs locally | Key handling | Consequence |
 | --- | --- | --- | --- |
-| Lightweight companion service | Clone, Go indexer, Postgres, and MCP backend | Hosted-provider keys stay in the companion | Best fit for the existing engine and private repositories later; the website talks to an authenticated loopback API. |
+| Lightweight companion service **(selected)** | Clone, Go indexer, Postgres, and MCP backend | Hosted-provider keys stay in the companion | Loopback website/API and Streamable HTTP MCP share one service contract. |
 | Browser-only | WASM git/parser/index and browser storage | A provider key cannot safely be kept in browser JavaScript | Requires a substantially different runtime and either no hosted generation or a credential-brokering backend. |
 
-Do not implement URL cloning, browser storage, or a web transport until this is
-chosen. The contracts below are deliberately transport-neutral.
+The contracts below are shared by the selected website and MCP transports.
 
 ## Reusable core today
 
@@ -33,10 +36,12 @@ The existing engine already supplies:
 - source-located snippets, signatures, graph edge kind/confidence, and a
   reproducible evaluation harness.
 
-It does **not** yet supply a repository registry/job system, URL ingestion,
-web UI, Streamable HTTP MCP, multi-repository selection, chat/completions
-client, deterministic context pack, citation validator, or credential
-boundary. Voyage is currently an embedding client only.
+The companion now supplies durable registry/job state, public-GitHub URL
+validation, a loopback website, multi-repository selection, Streamable HTTP
+MCP, deterministic cited context packs, explicit application sessions, a
+hosted-chat adapter, and a credential boundary. It still needs a production
+job worker/queue, non-loopback auth, generic non-Python indexing, additional
+provider adapters, and end-to-end real hosted-provider validation.
 
 ## Shared contracts
 
@@ -62,11 +67,12 @@ IndexJob {
 
 `canonical_url` normalizes supported public GitHub HTTPS and SSH forms. URL
 ingestion resolves the requested ref to a commit SHA before indexing, dedupes
-an already-ready `(canonical_url, commit_sha)` snapshot, permits cancellation
+active work for the same `(canonical_url, requested_ref)`, permits cancellation
 only at safe phase boundaries, and never runs repository hooks, build scripts,
-or repository-owned configuration. Reindexing is content-hash incremental only
-within an immutable snapshot's checkout; a changed ref resolves to a new
-snapshot.
+or repository-owned configuration. The current registry tracks the latest
+resolved snapshot for a URL+ref; when it moves, old application sessions are
+retained but marked stale and cannot be reused. Retaining multiple addressable
+historical companion rows is a remaining product gap.
 
 `capabilities` must name what was actually indexed, for example
 `python_structural_graph`, `text_lexical`, and `embeddings`. The first release
@@ -109,8 +115,11 @@ module-level chunks.
 
 ### Website answer
 
-Website chat consumes a ContextPack. If a hosted chat provider is configured,
-the server sends only that bounded pack and returns:
+Website chat consumes a ContextPack. `POST /api/answer` is available with an
+explicit OpenAI-compatible provider configuration; the checked-in UI currently
+shows the deterministic evidence view and credentials-required state rather
+than making a provider call. When a chat call is made, the server sends only
+that bounded pack and returns:
 
 ```text
 Answer {
@@ -134,21 +143,22 @@ model; caches must never cross snapshots.
 
 ## Website and MCP surface
 
-The initial website has four states: public-GitHub URL intake with optional
-ref; progress/error and cancellation; ready-repository selection; and a
-question/detail view with answer, evidence, and graph/source panes. It must
-show current language coverage before questions are asked.
+The current website implements public-GitHub URL intake with optional ref,
+ready-repository selection, deterministic evidence/source panes, a visible
+credentials-required state, and repository-scoped memory notes. Job status is
+polled; cancellation and rendered graph relationships are API-supported but
+not yet exposed as polished UI controls. It names Python structural coverage
+before questions are asked.
 
-The MCP surface keeps stdio and adds authenticated Streamable HTTP only after
-the selected runtime has an appropriate credential boundary. Both transports
-call the same registry and ContextPack service. Planned tools are:
+The legacy `cornifer-mcp` keeps its existing stdio structural tools.
+`cornifer-companion-mcp` and the companion's Streamable HTTP `/mcp` endpoint
+register the same registry/context/session tools; application session IDs are
+explicit data, not transport session IDs. Both website and MCP transports call
+the same ContextPack service. Current companion tools are:
 
-- `ingest_repo(url, ref?)` — explicit, mutating public-GitHub intake;
-- `get_index_status(job_id | repo_id)` and `list_repos()`;
-- `select_repo(repo_id, commit_sha?)` or an explicit snapshot argument on every
-  read; and
-- `get_context(question, repo_id, commit_sha?, budget, focus?)`, alongside the
-  existing structural tools.
+- `ingest_repository(url, ref?)`, `list_repositories()`, and `get_index_status(repo_id)`;
+- `get_context(question, repository_id, session_id?, budget?)`; and
+- `remember_context`, `get_session_context`, and `clear_context`.
 
 Agents may use `get_context` and existing retrieval tools directly, with no
 mandatory paid summarization. Website chat may opt into hosted generation only
