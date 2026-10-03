@@ -76,6 +76,17 @@ func isSkippedDir(name string) bool {
 // I/O here is local disk access, not something worth threading contexts
 // through).
 func Walk(ctx context.Context, root string) ([]File, error) {
+	return walk(ctx, root, false)
+}
+
+// WalkWithText additionally includes common documentation and source-text
+// formats as lexical-only files. Callers must not infer a structural graph for
+// these languages; Python remains the only parsed graph language.
+func WalkWithText(ctx context.Context, root string) ([]File, error) {
+	return walk(ctx, root, true)
+}
+
+func walk(ctx context.Context, root string, includeText bool) ([]File, error) {
 	absRoot, err := filepath.Abs(root)
 	if err != nil {
 		return nil, fmt.Errorf("walker: resolve root %q: %w", root, err)
@@ -113,8 +124,15 @@ func Walk(ctx context.Context, root string) ([]File, error) {
 			return nil
 		}
 
+		language := "python"
 		if !strings.HasSuffix(name, ".py") {
-			return nil
+			if !includeText {
+				return nil
+			}
+			language = textLanguage(name)
+			if language == "" {
+				return nil
+			}
 		}
 		if gi.ignored(path, false) {
 			return nil
@@ -135,9 +153,9 @@ func Walk(ctx context.Context, root string) ([]File, error) {
 		out = append(out, File{
 			File: model.File{
 				Path:        rel,
-				Language:    "python",
+				Language:    language,
 				ContentHash: hex.EncodeToString(sum[:]),
-				ModuleName:  moduleName(absRoot, path),
+				ModuleName:  moduleNameFor(language, absRoot, path),
 			},
 			Content: content,
 		})
@@ -149,6 +167,24 @@ func Walk(ctx context.Context, root string) ([]File, error) {
 
 	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
 	return out, nil
+}
+
+func moduleNameFor(language, root, path string) string {
+	if language == "python" {
+		return moduleName(root, path)
+	}
+	return ""
+}
+
+func textLanguage(name string) string {
+	switch strings.ToLower(filepath.Ext(name)) {
+	case ".md", ".mdx", ".rst", ".txt":
+		return "text"
+	case ".go", ".js", ".jsx", ".ts", ".tsx", ".java", ".rs", ".c", ".h", ".cpp", ".cc", ".cs", ".rb", ".php", ".swift", ".kt", ".kts", ".scala", ".sh", ".yaml", ".yml", ".toml", ".json", ".xml":
+		return "text"
+	default:
+		return ""
+	}
 }
 
 // moduleName derives the dotted Python module path for the file at path

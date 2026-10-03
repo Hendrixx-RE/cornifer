@@ -62,12 +62,15 @@ func Index(ctx context.Context, st store.Store, cfg Config) (*Stats, error) {
 
 	doneWalk := stats.track("walk")
 	walked, err := walker.Walk(ctx, absRoot)
+	if cfg.IncludeText {
+		walked, err = walker.WalkWithText(ctx, absRoot)
+	}
 	doneWalk()
 	if err != nil {
 		return nil, fmt.Errorf("indexer: walk: %w", err)
 	}
 	stats.Files = len(walked)
-	cfg.log("walked %d Python file(s)", len(walked))
+	cfg.log("walked %d indexable file(s)", len(walked))
 
 	files := make([]*model.File, len(walked))
 	for i := range walked {
@@ -86,8 +89,15 @@ func Index(ctx context.Context, st store.Store, cfg Config) (*Stats, error) {
 	results := make([]*parse.Result, len(files))
 	perFile := make([][]*model.Symbol, len(files))
 	ok := make([]bool, len(files)) // false if the file could not be parsed at all
+	chunkable := make([]bool, len(files))
 
 	for i, f := range files {
+		chunkable[i] = true
+		if f.Language != "python" {
+			// Generic text/source files are lexical-only. Do not run the Python
+			// extractor/resolver or imply graph coverage for them.
+			continue
+		}
 		res, err := parser.Parse(ctx, f.Path, walked[i].Content)
 		if err != nil {
 			cfg.log("warning: %s: parse failed, skipping: %v", f.Path, err)
@@ -125,8 +135,8 @@ func Index(ctx context.Context, st store.Store, cfg Config) (*Stats, error) {
 
 	doneResolve := stats.track("resolve")
 	var inputs []resolve.FileInput
-	for i, isOK := range ok {
-		if !isOK {
+	for i, canChunk := range chunkable {
+		if !canChunk {
 			continue
 		}
 		inputs = append(inputs, resolve.FileInput{File: files[i], Symbols: perFile[i], Result: results[i]})

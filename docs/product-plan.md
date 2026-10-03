@@ -40,8 +40,8 @@ The companion now supplies durable registry/job state, public-GitHub URL
 validation, a loopback website, multi-repository selection, Streamable HTTP
 MCP, deterministic cited context packs, explicit application sessions, a
 hosted-chat adapter, and a credential boundary. It still needs a production
-job worker/queue, non-loopback auth, generic non-Python indexing, additional
-provider adapters, and end-to-end real hosted-provider validation.
+job worker/queue, non-loopback auth, non-Python structural extraction,
+additional provider adapters, and end-to-end real hosted-provider validation.
 
 ## Shared contracts
 
@@ -69,10 +69,10 @@ IndexJob {
 ingestion resolves the requested ref to a commit SHA before indexing, dedupes
 active work for the same `(canonical_url, requested_ref)`, permits cancellation
 only at safe phase boundaries, and never runs repository hooks, build scripts,
-or repository-owned configuration. The current registry tracks the latest
-resolved snapshot for a URL+ref; when it moves, old application sessions are
-retained but marked stale and cannot be reused. Retaining multiple addressable
-historical companion rows is a remaining product gap.
+or repository-owned configuration. Each completed discovery creates an
+immutable companion snapshot row, so a moved ref preserves old sessions,
+context packs, checkout attribution, and provider provenance. Active work for
+the same URL+ref is deduplicated; historical rows stay addressable by ID.
 
 `capabilities` must name what was actually indexed, for example
 `python_structural_graph`, `text_lexical`, and `embeddings`. The first release

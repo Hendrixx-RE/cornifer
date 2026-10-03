@@ -91,7 +91,10 @@ const repoColumns = `id, canonical_url, requested_ref, resolved_commit_sha, chec
 
 func (s *PostgresStore) UpsertRepository(ctx context.Context, in Repository) (Repository, bool, error) {
 	var existing Repository
-	existing, err := scanRepo(s.pool.QueryRow(ctx, `SELECT `+repoColumns+` FROM companion_repositories WHERE canonical_url=$1 AND requested_ref=$2`, in.CanonicalURL, in.RequestedRef))
+	// Only work in progress is deduplicated. A completed record is a pinned
+	// snapshot: ingesting a branch again intentionally creates a fresh row so a
+	// moved ref cannot overwrite old context or memory.
+	existing, err := scanRepo(s.pool.QueryRow(ctx, `SELECT `+repoColumns+` FROM companion_repositories WHERE canonical_url=$1 AND requested_ref=$2 AND status = ANY($3) ORDER BY updated_at DESC LIMIT 1`, in.CanonicalURL, in.RequestedRef, []string{string(StatusQueued), string(StatusCloning), string(StatusResolving), string(StatusIndexing), string(StatusAwaitingCredential)}))
 	if err == nil {
 		return existing, true, nil
 	}
@@ -153,18 +156,10 @@ func (s *PostgresStore) UpdateRepository(ctx context.Context, r Repository) erro
 		return err
 	}
 	return s.withTx(ctx, func(tx pgx.Tx) error {
-		var oldSHA string
-		if err := tx.QueryRow(ctx, `SELECT resolved_commit_sha FROM companion_repositories WHERE id=$1 FOR UPDATE`, r.ID).Scan(&oldSHA); errors.Is(err, pgx.ErrNoRows) {
+		if err := tx.QueryRow(ctx, `SELECT id FROM companion_repositories WHERE id=$1 FOR UPDATE`, r.ID).Scan(new(string)); errors.Is(err, pgx.ErrNoRows) {
 			return ErrNotFound
 		} else if err != nil {
 			return err
-		}
-		if oldSHA != "" && r.ResolvedCommitSHA != "" && oldSHA != r.ResolvedCommitSHA {
-			// A branch/ref may move. Retain the old application memory but make
-			// its snapshot boundary explicit so it can never be reused silently.
-			if _, err := tx.Exec(ctx, `UPDATE companion_sessions SET stale=true,updated_at=now() WHERE repository_id=$1 AND commit_sha=$2`, r.ID, oldSHA); err != nil {
-				return err
-			}
 		}
 		ct, err := tx.Exec(ctx, `UPDATE companion_repositories SET resolved_commit_sha=$2,checkout_path=$3,cache_dir=$4,engine_repo_id=NULLIF($5,0),status=$6,capabilities=$7,error_code=$8,safe_message=$9,index_version=$10,provider_fingerprint=$11,updated_at=now() WHERE id=$1`, r.ID, r.ResolvedCommitSHA, r.CheckoutPath, r.CacheDir, r.EngineRepoID, r.Status, caps, r.ErrorCode, r.SafeMessage, r.IndexVersion, r.ProviderFingerprint)
 		if err != nil {

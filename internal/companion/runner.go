@@ -141,7 +141,7 @@ func (r LocalRunner) Run(ctx context.Context, repo Repository, progress func(Pro
 		return repo, err
 	}
 	progress(Progress{Phase: string(StatusIndexing), Cancellable: true})
-	stats, err := indexer.Index(ctx, r.Engine, indexer.Config{RepoRoot: checkout, CacheDir: cacheDir, Embedder: embedCfg})
+	stats, err := indexer.Index(ctx, r.Engine, indexer.Config{RepoRoot: checkout, CacheDir: cacheDir, Embedder: embedCfg, IncludeText: true})
 	if err != nil {
 		return repo, err
 	}

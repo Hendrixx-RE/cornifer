@@ -10,7 +10,7 @@ import (
 
 // This test is opt-in because the normal unit suite must not require a
 // database. It exercises persistence across two pools, event bounds and the
-// snapshot-staleness guard against a migration-11 database.
+// immutable snapshot isolation against a migration-12 database.
 func TestPostgresSessionSnapshotIsolation(t *testing.T) {
 	dsn := os.Getenv("CORNIFER_COMPANION_TEST_DSN")
 	if dsn == "" {
@@ -48,16 +48,22 @@ func TestPostgresSessionSnapshotIsolation(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer b.Close()
-	repo.ResolvedCommitSHA = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-	if err := b.UpdateRepository(ctx, repo); err != nil {
+	// A second snapshot for the same URL/ref must not mutate the first row.
+	second, reused, err := b.UpsertRepository(ctx, Repository{CanonicalURL: repo.CanonicalURL, RequestedRef: repo.RequestedRef, Status: StatusQueued, IndexVersion: IndexVersion})
+	if err != nil || reused || second.ID == repo.ID {
+		t.Fatalf("second snapshot = %+v reused=%v err=%v", second, reused, err)
+	}
+	second.ResolvedCommitSHA = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	second.Status = StatusReady
+	if err := b.UpdateRepository(ctx, second); err != nil {
 		t.Fatal(err)
 	}
 	got, err := b.GetSession(ctx, session.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !got.Stale {
-		t.Fatal("old commit session was not marked stale")
+	if got.Stale || got.RepositoryID != repo.ID || got.CommitSHA != "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" {
+		t.Fatalf("old snapshot session was corrupted: %+v", got)
 	}
 	if err := b.ClearSession(ctx, session.ID); err != nil {
 		t.Fatal(err)

@@ -120,9 +120,11 @@ Without hosted embedding credentials, indexing enters an explicit
 `awaiting_credentials` state; it never substitutes fake or local vectors.
 `get_context` returns bounded evidence with commit SHA, normalized path/lines,
 excerpt hash, retrieval provenance, and graph relationships. Its explicit
-application `session_id` is persisted, bounded, repo+commit scoped, and marked
-stale if the tracked ref moves. Python is the only structural-graph language
-today; other language/text coverage must not be presented as complete.
+application `session_id` is persisted, bounded, and repo+commit scoped; a
+moved ref receives a separate snapshot rather than overwriting it. Python is the only structural-graph language
+today. The companion also chunks common docs and source-text extensions for
+lexical retrieval, but those files have no symbols or graph edges and must not
+be presented as complete structural coverage.
 
 ## Architecture
 

@@ -48,6 +48,10 @@ type Config struct {
 	// Logf receives progress and warning lines (resolution stats, oversized
 	// chunk warnings, per-phase timings). Nil discards them.
 	Logf func(format string, args ...any)
+
+	// IncludeText enables lexical-only chunks for common documentation and
+	// unsupported source formats. Python remains the only structural graph.
+	IncludeText bool
 }
 
 func (c Config) log(format string, args ...any) {
