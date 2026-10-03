@@ -256,7 +256,14 @@ function renderSession(session,events){$('#remember-form').hidden=false;$('#reme
 $('#remember-form').addEventListener('submit',async event=>{event.preventDefault();if(!state.sessionID)return;try{await API(`/api/sessions/${encodeURIComponent(state.sessionID)}/remember`,{method:'POST',body:JSON.stringify({note:$('#note').value})});$('#note').value='';toast('Note saved to this session');await loadSession();}catch(error){setStatus('#question-status',error.message,'error');}});
 $('#clear-session').addEventListener('click',async()=>{if(!state.sessionID)return;try{await API(`/api/sessions/${encodeURIComponent(state.sessionID)}`,{method:'DELETE'});forgetStoredSession(state.selected?.id);state.sessionID='';$('#memory-events').replaceChildren();$('#remember-form').hidden=true;$('#clear-session').disabled=true;$('#session').textContent='Session memory cleared.';toast('Session memory cleared');}catch(error){toast(error.message);}});
 
-async function copyMCP(){try{await navigator.clipboard.writeText(MCP_URL);$('#copy-status').textContent='MCP endpoint copied to clipboard';toast('MCP endpoint copied');}catch{const input=document.createElement('textarea');input.value=MCP_URL;document.body.append(input);input.select();document.execCommand('copy');input.remove();$('#copy-status').textContent='MCP endpoint copied to clipboard';toast('MCP endpoint copied');}}
+function copyMCP(){
+  const input=document.createElement('textarea');input.value=MCP_URL;input.setAttribute('readonly','');input.style.position='fixed';input.style.opacity='0';document.body.append(input);input.select();
+  let copied=false;try{copied=document.execCommand('copy');}catch{}input.remove();
+  const status=$('#copy-status');
+  if(copied){status.textContent='MCP endpoint copied to clipboard';toast('MCP endpoint copied');return;}
+  status.textContent='Clipboard unavailable; copy the endpoint shown above.';toast('Clipboard unavailable');
+  try{navigator.clipboard?.writeText(MCP_URL).then(()=>{status.textContent='MCP endpoint copied to clipboard';toast('MCP endpoint copied');}).catch(()=>{});}catch{}
+}
 $('#copy-mcp').addEventListener('click',copyMCP);$('#mcp-endpoint').addEventListener('click',copyMCP);
 $('#coverage-info').addEventListener('click',()=>toast('Python has structural symbols and edges. Other indexed languages are text retrieval only.'));
 document.addEventListener('keydown',event=>{if((event.metaKey||event.ctrlKey)&&event.key.toLowerCase()==='k'){event.preventDefault();$('#catalog-search').focus();$('#files-section').hidden=false;}if(event.key==='Escape'&&document.activeElement===$('#catalog-search')){$('#catalog-search').blur();}});
