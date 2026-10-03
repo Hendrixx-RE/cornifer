@@ -9,6 +9,11 @@ server**.
 See [plan.md](plan.md) for the full architecture, phased build plan, and
 design decisions.
 
+The implemented engine is the foundation for a planned website plus callable
+MCP product. The architecture-neutral product roadmap, contracts, acceptance
+criteria, and current browser/companion decision boundary are in
+[docs/product-plan.md](docs/product-plan.md).
+
 ## Status
 
 **The core indexing, retrieval, MCP, and evaluation paths are implemented.** `cornifer index`

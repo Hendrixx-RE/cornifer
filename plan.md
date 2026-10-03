@@ -2,6 +2,12 @@
 
 Parse a real codebase into a **structural index** (AST → symbols → import/call graph) and a **semantic index** (AST-aware chunks → embeddings + BM25), answer queries by combining exact structural lookups with hybrid retrieval, and expose it all as an **MCP server** so any AI tool can call it.
 
+This remains the engine implementation plan. The next product layer—a website,
+public-GitHub repository registry, shared evidence contracts, hosted answer
+generation, and HTTP MCP—is specified separately in
+[docs/product-plan.md](docs/product-plan.md). It intentionally does not choose
+between a lightweight companion service and browser-only indexing yet.
+
 ## Decisions to confirm
 
 | Decision | Default in this plan | Notes |
