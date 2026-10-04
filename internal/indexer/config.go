@@ -25,6 +25,8 @@ const (
 
 // Config configures a full indexing run.
 type Config struct {
+	// Progress reports actual full-index pipeline boundaries, not estimates.
+	Progress func(Progress)
 	// RepoRoot is the filesystem path to the repository to index.
 	RepoRoot string
 
@@ -48,6 +50,21 @@ type Config struct {
 	// Logf receives progress and warning lines (resolution stats, oversized
 	// chunk warnings, per-phase timings). Nil discards them.
 	Logf func(format string, args ...any)
+
+	// IncludeText enables lexical-only chunks for common documentation and
+	// unsupported source formats. Python remains the only structural graph.
+	IncludeText bool
+}
+
+type Progress struct {
+	Phase                string
+	Files, Chunks, Edges int
+}
+
+func (c Config) progress(phase string, stats *Stats) {
+	if c.Progress != nil {
+		c.Progress(Progress{Phase: phase, Files: stats.Files, Chunks: stats.Chunks, Edges: stats.Edges})
+	}
 }
 
 func (c Config) log(format string, args ...any) {

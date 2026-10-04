@@ -9,7 +9,9 @@
 //	CORNIFER_REPO_ID       repo id to serve (default 1)
 //	CORNIFER_DATABASE_URL  Postgres DSN (default: docker-compose database)
 //	CORNIFER_BM25_INDEX    path to a saved bm25 index; enables lexical search
-//	VOYAGE_API_KEY         enables vector search (with CORNIFER_BM25_INDEX or alone)
+//	VOYAGE_API_KEY         enables Voyage vector search (with CORNIFER_BM25_INDEX or alone)
+//	CORNIFER_SIDECAR_ENDPOINT and CORNIFER_SIDECAR_MODEL enable a matching
+//	                      local-sidecar vector search for sidecar-indexed repos
 //
 // stdout carries the MCP protocol, so all logging goes to stderr.
 package main
@@ -80,6 +82,11 @@ func storeDeps(ctx context.Context) (mcp.Deps, func(), error) {
 	if err != nil {
 		return mcp.Deps{}, nil, fmt.Errorf("connect to store: %w", err)
 	}
+	repo, err := st.GetRepoByID(ctx, repoID)
+	if err != nil {
+		st.Close()
+		return mcp.Deps{}, nil, fmt.Errorf("load repo %d: %w", repoID, err)
+	}
 
 	cat := storeCatalog{st: st, repoID: repoID}
 	deps := mcp.Deps{
@@ -100,19 +107,85 @@ func storeDeps(ctx context.Context) (mcp.Deps, func(), error) {
 	}
 	var vector retrieve.VectorSearcher
 	var emb embed.Embedder
-	if os.Getenv(embed.VoyageAPIKeyEnvVar) != "" {
-		if emb, err = embed.New(embed.Config{Provider: embed.ProviderVoyage}); err != nil {
+	provider := embed.Provider(repo.EmbeddingProvider)
+	switch provider {
+	case embed.ProviderGemini:
+		cfg := embed.ConfigFromEnvironment(embed.Config{Provider: provider})
+		cfg.Gemini.InputType = "query"
+		if cfg.Gemini.APIKey == "" {
+			log.Printf("vector search disabled: Gemini credentials absent; set GEMINI_API_KEY or CORNIFER_EMBEDDING_API_KEY")
+		} else if err = embed.ValidateQuerySpace(repo.EmbeddingProvider, repo.EmbeddingModel, cfg); err == nil {
+			emb, err = embed.New(cfg)
+		}
+	case embed.ProviderFake:
+		emb, err = embed.New(embed.Config{Provider: provider})
+	case embed.ProviderVoyage:
+		if os.Getenv(embed.VoyageAPIKeyEnvVar) == "" {
+			log.Printf("vector search disabled: repo %d uses Voyage but %s is not set", repoID, embed.VoyageAPIKeyEnvVar)
+		} else {
+			emb, err = embed.New(embed.Config{Provider: provider, Voyage: embed.VoyageConfig{InputType: "query"}})
+		}
+	case embed.ProviderSidecar:
+		sidecarCfg := embed.ConfigFromEnvironment(embed.Config{Provider: provider})
+		if sidecarCfg.Sidecar.Model == "" {
+			st.Close()
+			return mcp.Deps{}, nil, fmt.Errorf("repo %d uses a sidecar; %s must name the matching model and revision", repoID, embed.SidecarModelEnvVar)
+		}
+		if repo.EmbeddingModel != "" && repo.EmbeddingModel != "unknown" && repo.EmbeddingModel != sidecarCfg.Sidecar.Model {
+			st.Close()
+			return mcp.Deps{}, nil, fmt.Errorf("repo %d uses embedding model %q, but configured sidecar declares %q", repoID, repo.EmbeddingModel, sidecarCfg.Sidecar.Model)
+		}
+		emb, err = embed.New(sidecarCfg)
+	default:
+		log.Printf("vector search disabled: repo %d has unknown embedding provider %q", repoID, repo.EmbeddingProvider)
+	}
+	if err != nil {
+		st.Close()
+		return mcp.Deps{}, nil, err
+	}
+	if emb != nil {
+		vector = repoVectorSearcher{st: st, repoID: repoID}
+	}
+	if sparse != nil || vector != nil {
+		boost, err := buildGraphBoost(ctx, st, repoID)
+		if err != nil {
 			st.Close()
 			return mcp.Deps{}, nil, err
 		}
-		vector = st
-	}
-	if sparse != nil || vector != nil {
-		deps.Search = retrieve.NewHybridSearcher(sparse, vector, emb, retrieve.Config{})
+		deps.Search = retrieve.NewHybridSearcher(sparse, vector, emb, retrieve.Config{Boost: boost})
 	} else {
-		log.Print("search_code disabled: set CORNIFER_BM25_INDEX and/or VOYAGE_API_KEY")
+		log.Print("search_code disabled: set CORNIFER_BM25_INDEX, VOYAGE_API_KEY, or a matching CORNIFER_SIDECAR_ENDPOINT")
 	}
 	return deps, func() { st.Close() }, nil
+}
+
+func buildGraphBoost(ctx context.Context, st store.Store, repoID int64) (retrieve.BoostStage, error) {
+	weight := retrieve.DefaultGraphBoostWeight
+	if raw := os.Getenv("CORNIFER_GRAPH_BOOST_WEIGHT"); raw != "" {
+		parsed, err := strconv.ParseFloat(raw, 64)
+		if err != nil || parsed < 0 {
+			return nil, fmt.Errorf("invalid CORNIFER_GRAPH_BOOST_WEIGHT %q: want a non-negative number", raw)
+		}
+		weight = parsed
+	}
+	if weight == 0 {
+		return nil, nil
+	}
+	chunks, err := st.ListChunks(ctx, repoID)
+	if err != nil {
+		return nil, fmt.Errorf("load chunks for graph boost: %w", err)
+	}
+	edges, err := st.LoadEdges(ctx, repoID)
+	if err != nil {
+		return nil, fmt.Errorf("load graph boost edges: %w", err)
+	}
+	chunkSymbols := make(map[int64]*int64, len(chunks))
+	chunkFiles := make(map[int64]int64, len(chunks))
+	for _, chunk := range chunks {
+		chunkSymbols[chunk.ID] = chunk.SymbolID
+		chunkFiles[chunk.ID] = chunk.FileID
+	}
+	return retrieve.GraphBoost{Graph: graph.Build(edges), ChunkSymbols: chunkSymbols, ChunkFiles: chunkFiles, Weight: weight}, nil
 }
 
 // storeCatalog adapts store.Store to mcp.Catalog: a thin passthrough now
@@ -121,6 +194,17 @@ func storeDeps(ctx context.Context) (mcp.Deps, func(), error) {
 type storeCatalog struct {
 	st     store.Store
 	repoID int64
+}
+
+// repoVectorSearcher prevents MCP search_code from leaking chunks from a
+// different repository snapshot in a shared Cornifer database.
+type repoVectorSearcher struct {
+	st     store.Store
+	repoID int64
+}
+
+func (s repoVectorSearcher) VectorSearch(ctx context.Context, query []float32, limit int) ([]*model.Chunk, error) {
+	return s.st.VectorSearchByRepo(ctx, s.repoID, query, limit)
 }
 
 func (c storeCatalog) GetFiles(ctx context.Context, ids []int64) (map[int64]*model.File, error) {

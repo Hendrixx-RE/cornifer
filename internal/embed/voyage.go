@@ -18,6 +18,7 @@ import (
 type voyageClient struct {
 	apiKey     string
 	model      string
+	inputType  string
 	baseURL    string
 	dim        int
 	httpClient *http.Client
@@ -36,6 +37,13 @@ func newVoyageClient(cfg VoyageConfig, dim int) (*voyageClient, error) {
 	if model == "" {
 		model = DefaultVoyageModel
 	}
+	inputType := cfg.InputType
+	if inputType == "" {
+		inputType = "document"
+	}
+	if inputType != "document" && inputType != "query" {
+		return nil, fmt.Errorf("embed: VoyageConfig.InputType must be document or query, got %q", inputType)
+	}
 	baseURL := cfg.BaseURL
 	if baseURL == "" {
 		baseURL = DefaultVoyageBaseURL
@@ -45,7 +53,7 @@ func newVoyageClient(cfg VoyageConfig, dim int) (*voyageClient, error) {
 		httpClient = &http.Client{Timeout: DefaultHTTPTimeout}
 	}
 
-	return &voyageClient{apiKey: key, model: model, baseURL: baseURL, dim: dim, httpClient: httpClient}, nil
+	return &voyageClient{apiKey: key, model: model, inputType: inputType, baseURL: baseURL, dim: dim, httpClient: httpClient}, nil
 }
 
 type voyageRequest struct {
@@ -68,7 +76,7 @@ func (c *voyageClient) doEmbed(ctx context.Context, texts []string) ([][]float32
 	reqBody, err := json.Marshal(voyageRequest{
 		Input:           texts,
 		Model:           c.model,
-		InputType:       "document",
+		InputType:       c.inputType,
 		OutputDimension: c.dim,
 	})
 	if err != nil {

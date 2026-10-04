@@ -2,6 +2,12 @@
 
 Parse a real codebase into a **structural index** (AST → symbols → import/call graph) and a **semantic index** (AST-aware chunks → embeddings + BM25), answer queries by combining exact structural lookups with hybrid retrieval, and expose it all as an **MCP server** so any AI tool can call it.
 
+This remains the engine implementation plan. The next product layer—a website,
+public-GitHub repository registry, shared evidence contracts, hosted answer
+generation, and HTTP MCP—is specified separately in
+[docs/product-plan.md](docs/product-plan.md). It intentionally does not choose
+between a lightweight companion service and browser-only indexing yet.
+
 ## Decisions to confirm
 
 | Decision | Default in this plan | Notes |
@@ -142,7 +148,7 @@ cornifer/
 
 **Days 13–14: hybrid fusion**
 - [ ] Reciprocal Rank Fusion: `score = Σ 1 / (k + rank_i)`, `k = 60`; parameterize.
-- [ ] Graph boosting: after fusion, boost hits that are graph-adjacent (callers/callees/same module) to other top-N hits; weight configurable.
+- [x] Graph boosting: after fusion, boost hits that are graph-adjacent (callers/callees/same module) to other top-N hits; weight configurable.
 - [ ] Optional cross-encoder rerank of the top ~50 (behind a flag; only keep it if the eval shows it helps).
 - [ ] Iterate against real queries; record what was tried in `docs/tuning.md`.
 
@@ -151,26 +157,45 @@ cornifer/
 ### Week 3 — API layer, evaluation, polish
 
 **Days 15–16: MCP server**
-- [ ] Tools: `search_code`, `find_definition`, `find_references`, `get_dependencies`, `get_call_graph`. Add `get_blast_radius` and `find_cycles` since they are the demo headliners.
-- [ ] Tight JSON schemas, bounded outputs (limit/depth params, truncated snippets), and useful errors ("symbol ambiguous: candidates …").
-- [ ] stdio transport first; test from Claude Code (`claude mcp add`).
+- [x] Tools: `search_code`, `find_definition`, `find_references`, `get_dependencies`, `get_call_graph`, `get_blast_radius`, and `find_cycles`.
+- [x] Tight JSON schemas, bounded outputs (limit/depth params, truncated snippets), and useful errors ("symbol ambiguous: candidates …").
+- [x] stdio transport smoke-tested locally through all seven tools with `tools/mcp_stdio_smoke.py`. Claude Code registration remains an environment-specific follow-up.
 
 **Day 17: optional REST endpoint**
 - [ ] Thin HTTP layer over the same handlers so external agents can call without MCP.
 
 **Days 18–19: evaluation (non-negotiable)**
-- [ ] Hand-build 20–30 queries in `eval/queries.yaml`, mixing types:
+- [x] Hand-build 20–30 queries in `eval/queries.yaml`, mixing types:
   - structural (find references / callers / blast radius) — ground truth verified with IDE "find references" (Pyright/Pylance) on the pinned commit;
   - semantic / vocabulary-mismatch (e.g. "rate limiting"-style intent queries);
   - exact-identifier lookups (where grep should do well — be honest).
-- [ ] Systems compared: **hybrid (full)**, hybrid without graph boost, BM25-only, vector-only, `grep`/ripgrep baseline.
-- [ ] Metrics: precision@5, recall@5, MRR; broken out per query type. Commit the raw results.
-- [ ] Failure analysis: for the misses, note whether the cause was resolution heuristics, chunking, or embedding.
+- [x] The committed set has 22 grounded FastAPI queries at
+  `40e33e492dbf4af6172997f4e3238a32e56cbe26` (7 structural, 7 semantic,
+  8 identifier). Pyright 1.1.412 independently verified the seven structural
+  declaration labels through LSP definition/references; the remaining 15 stay
+  explicitly source-verified.
+- [x] `cornifer eval` runs graph-boosted hybrid, hybrid without graph boost,
+  BM25-only, vector-only, and ripgrep. Raw output describes the graph stage
+  and preserves both rankings for a meaningful ablation.
+- [x] `cornifer eval` calculates precision@5, recall@5, and MRR overall and
+  per query type, and writes reproducible raw JSON containing target/index
+  SHA, label provenance, provider/model metadata, and exact top-five ranks.
+- [x] Run and commit a real-embedding pinned-FastAPI **source-package** raw
+  result: `eval/results/fastapi-40e33e492db-jina-code-source-128.json` uses a
+  local Jina model and isolated Postgres/pgvector. Its 44-file `fastapi/`
+  corpus is explicitly not a full-checkout benchmark.
+- [x] Failure analysis is recorded in `docs/evaluation-fastapi.md`; it classifies
+  source-observed top-five misses and preserves uncertainty between truncation,
+  chunking, and embedding behavior.
 
 **Days 20–21: polish**
-- [ ] Incremental reindex: diff `content_hash`, re-parse changed files, delete/reinsert their symbols/chunks, re-resolve edges touching them.
-- [ ] README: architecture diagram, quickstart, eval table, known limitations.
-- [ ] Short demo recording built around the four "grep can't" questions.
+- [x] Incremental reindex: diff `content_hash`, re-parse/rechunk/re-embed
+  added or changed files, delete removed files, and rebuild cross-file edges,
+  unresolved refs, and BM25 consistently. New commit SHAs intentionally stay
+  separate snapshots and still take a clean full index.
+- [x] README: architecture diagram, quickstart, known limitations, real result
+  table, and a reproducible command demo.
+- [x] Reproducible stdio MCP demo artifact: `tools/mcp_stdio_smoke.py`.
 
 ## Embedding bridge (Go-specific)
 

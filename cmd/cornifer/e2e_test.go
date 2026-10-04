@@ -3,12 +3,14 @@ package main
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/Hendrixx-RE/cornifer/internal/indexer"
 	"github.com/Hendrixx-RE/cornifer/internal/store"
 )
 
@@ -66,6 +68,23 @@ def run():
 `)
 
 	return root
+}
+
+// writeFixtureEvalDataset makes a valid 20-query corpus for the temporary
+// repo used by TestEndToEndFixtureRepo. It intentionally labels source spans
+// rather than pretending this tiny fixture has IDE-verification coverage.
+func writeFixtureEvalDataset(t *testing.T, repoRoot, commit string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "queries.yaml")
+	data := "version: 1\ntarget:\n  repository: fixture\n  commit: " + commit + "\nqueries:\n"
+	for i := 0; i < 20; i++ {
+		typ := []string{"structural", "semantic", "identifier"}[i%3]
+		data += fmt.Sprintf("  - id: fixture-%02d\n    type: %s\n    query: greeter\n    verification: source\n    evidence: foo.py:4 (fixture source inspected)\n    relevant:\n      - path: foo.py\n        start_line: 4\n        end_line: 4\n        symbol: foo.Greeter\n", i, typ)
+	}
+	if err := os.WriteFile(path, []byte(data), 0o644); err != nil {
+		t.Fatalf("write eval dataset: %v", err)
+	}
+	return path
 }
 
 func mustWrite(t *testing.T, path, content string) {
@@ -163,5 +182,69 @@ func TestEndToEndFixtureRepo(t *testing.T) {
 	}
 	if strings.Contains(out, "no results") {
 		t.Errorf("query output = %q, want at least one result", out)
+	}
+
+	// eval: all retrieval systems, source-label validation, metrics, and raw
+	// JSON output. This remains in the database-gated test so normal unit
+	// tests need neither Docker nor a real embedding provider.
+	commit, err := indexer.ResolveCommitSHA(repoRoot)
+	if err != nil {
+		t.Fatalf("resolve fixture commit: %v", err)
+	}
+	queries := writeFixtureEvalDataset(t, repoRoot, commit)
+	results := filepath.Join(t.TempDir(), "results.json")
+	out, err = runCLI(t, "eval", "--repo", repoRoot, "--cache-dir", cacheDir, "--embed-provider", "fake", "--queries", queries, "--output", results)
+	if err != nil {
+		t.Fatalf("eval: %v\noutput:\n%s", err, out)
+	}
+	if !strings.Contains(out, "wrote raw results:") || !strings.Contains(out, "ripgrep") {
+		t.Errorf("eval output missing expected systems/artifact:\n%s", out)
+	}
+	if _, err := os.Stat(results); err != nil {
+		t.Errorf("eval results not written: %v", err)
+	}
+
+	// Incremental reindex: change foo, add a cross-file caller, then delete
+	// it. The fixture is not a git checkout, so its stable pseudo-SHA lets
+	// this exercise the same-snapshot content-hash path directly.
+	mustWrite(t, filepath.Join(repoRoot, "foo.py"), `"""Foo module: a greeter."""
+
+
+class Greeter:
+    def greet(self, name):
+        return f"hello {name}"
+
+
+def make_greeter():
+    return Greeter()
+
+
+def farewell(name):
+    return f"bye {name}"
+`)
+	mustWrite(t, filepath.Join(repoRoot, "baz.py"), `from foo import farewell
+
+
+def run():
+    return farewell("world")
+`)
+	out, err = runCLI(t, "reindex", "--repo", repoRoot, "--cache-dir", cacheDir, "--embed-provider", "fake")
+	if err != nil {
+		t.Fatalf("incremental reindex add/change: %v\noutput:\n%s", err, out)
+	}
+	out, err = runCLI(t, "callers", "foo.farewell", "--repo", repoRoot, "--cache-dir", cacheDir)
+	if err != nil || !strings.Contains(out, "baz.run") {
+		t.Fatalf("callers after incremental add/change: err=%v output=%s", err, out)
+	}
+	if err := os.Remove(filepath.Join(repoRoot, "baz.py")); err != nil {
+		t.Fatalf("delete added file: %v", err)
+	}
+	out, err = runCLI(t, "reindex", "--repo", repoRoot, "--cache-dir", cacheDir, "--embed-provider", "fake")
+	if err != nil {
+		t.Fatalf("incremental reindex delete: %v\noutput:\n%s", err, out)
+	}
+	out, err = runCLI(t, "find-definition", "baz.run", "--repo", repoRoot, "--cache-dir", cacheDir)
+	if err != nil || !strings.Contains(out, "no definition found") {
+		t.Fatalf("find deleted definition: err=%v output=%s", err, out)
 	}
 }

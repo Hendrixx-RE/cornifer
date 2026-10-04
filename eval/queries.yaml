@@ -1,0 +1,229 @@
+# Labels are tied to FastAPI 0.115.0 at the commit below. Every label in this
+# labels were checked by directly reading their pinned source span. The seven
+# structural declaration labels additionally have independent Pyright LSP
+# definition/reference evidence; remaining labels are source-verified.
+version: 1
+target:
+  repository: fastapi/fastapi
+  commit: 40e33e492dbf4af6172997f4e3238a32e56cbe26
+queries:
+  - id: structural-route-delegation
+    type: structural
+    query: Where does FastAPI forward route registration to its router?
+    verification: ide
+    evidence: fastapi/applications.py:1056 (pinned source inspected; Pyright LSP 1.1.412 definition/references, report eval/verification/fastapi-pyright-lsp-40e33e492.json)
+    relevant:
+      - path: fastapi/applications.py
+        start_line: 1056
+        end_line: 1056
+        symbol: fastapi.applications.FastAPI.add_api_route
+  - id: structural-route-construction
+    type: structural
+    query: Which router method constructs APIRoute instances for a path operation?
+    verification: ide
+    evidence: fastapi/routing.py:879 (pinned source inspected; Pyright LSP 1.1.412 definition/references, report eval/verification/fastapi-pyright-lsp-40e33e492.json)
+    relevant:
+      - path: fastapi/routing.py
+        start_line: 879
+        end_line: 879
+        symbol: fastapi.routing.APIRouter.add_api_route
+  - id: structural-router-inclusion
+    type: structural
+    query: Where are included routers merged with prefixes and tags?
+    verification: ide
+    evidence: fastapi/routing.py:1120 (pinned source inspected; Pyright LSP 1.1.412 definition/references, report eval/verification/fastapi-pyright-lsp-40e33e492.json)
+    relevant:
+      - path: fastapi/routing.py
+        start_line: 1120
+        end_line: 1120
+        symbol: fastapi.routing.APIRouter.include_router
+  - id: structural-request-handler
+    type: structural
+    query: Which function creates the endpoint callable that solves dependencies?
+    verification: ide
+    evidence: fastapi/routing.py:217 (pinned source inspected; Pyright LSP 1.1.412 definition/references, report eval/verification/fastapi-pyright-lsp-40e33e492.json)
+    relevant:
+      - path: fastapi/routing.py
+        start_line: 217
+        end_line: 217
+        symbol: fastapi.routing.get_request_handler
+  - id: structural-response-serialization
+    type: structural
+    query: Where does route handling serialize values returned by an endpoint?
+    verification: ide
+    evidence: fastapi/routing.py:143 (pinned source inspected; Pyright LSP 1.1.412 definition/references, report eval/verification/fastapi-pyright-lsp-40e33e492.json)
+    relevant:
+      - path: fastapi/routing.py
+        start_line: 143
+        end_line: 143
+        symbol: fastapi.routing.serialize_response
+  - id: structural-dependant-building
+    type: structural
+    query: Where is a dependant built from an endpoint signature?
+    verification: ide
+    evidence: fastapi/dependencies/utils.py:257 (pinned source inspected; Pyright LSP 1.1.412 definition/references, report eval/verification/fastapi-pyright-lsp-40e33e492.json)
+    relevant:
+      - path: fastapi/dependencies/utils.py
+        start_line: 257
+        end_line: 257
+        symbol: fastapi.dependencies.utils.get_dependant
+  - id: structural-dependency-solving
+    type: structural
+    query: Where are dependency values solved before a request endpoint runs?
+    verification: ide
+    evidence: fastapi/dependencies/utils.py:562 (pinned source inspected; Pyright LSP 1.1.412 definition/references, report eval/verification/fastapi-pyright-lsp-40e33e492.json)
+    relevant:
+      - path: fastapi/dependencies/utils.py
+        start_line: 562
+        end_line: 562
+        symbol: fastapi.dependencies.utils.solve_dependencies
+  - id: semantic-json-compatible-data
+    type: semantic
+    query: Convert arbitrary models and dates into JSON-safe data.
+    verification: source
+    evidence: fastapi/encoders.py:102 (pinned source inspected)
+    relevant:
+      - path: fastapi/encoders.py
+        start_line: 102
+        end_line: 102
+        symbol: fastapi.encoders.jsonable_encoder
+  - id: semantic-openapi-document
+    type: semantic
+    query: Generate an OpenAPI document from application routes.
+    verification: source
+    evidence: fastapi/openapi/utils.py:456 (pinned source inspected)
+    relevant:
+      - path: fastapi/openapi/utils.py
+        start_line: 456
+        end_line: 456
+        symbol: fastapi.openapi.utils.get_openapi
+  - id: semantic-openapi-request-body
+    type: semantic
+    query: Derive a request body schema for an OpenAPI operation.
+    verification: source
+    evidence: fastapi/openapi/utils.py:149 (pinned source inspected)
+    relevant:
+      - path: fastapi/openapi/utils.py
+        start_line: 149
+        end_line: 149
+        symbol: fastapi.openapi.utils.get_openapi_operation_request_body
+  - id: semantic-openapi-security
+    type: semantic
+    query: Compute security schemes for OpenAPI documentation.
+    verification: source
+    evidence: fastapi/openapi/utils.py:77 (pinned source inspected)
+    relevant:
+      - path: fastapi/openapi/utils.py
+        start_line: 77
+        end_line: 77
+        symbol: fastapi.openapi.utils.get_openapi_security_definitions
+  - id: semantic-http-exception
+    type: semantic
+    query: Turn an HTTPException into an HTTP response.
+    verification: source
+    evidence: fastapi/exception_handlers.py:11 (pinned source inspected)
+    relevant:
+      - path: fastapi/exception_handlers.py
+        start_line: 11
+        end_line: 11
+        symbol: fastapi.exception_handlers.http_exception_handler
+  - id: semantic-form-body
+    type: semantic
+    query: Extract form fields and uploaded files from a request body.
+    verification: source
+    evidence: fastapi/dependencies/utils.py:823 (pinned source inspected)
+    relevant:
+      - path: fastapi/dependencies/utils.py
+        start_line: 823
+        end_line: 823
+        symbol: fastapi.dependencies.utils._extract_form_body
+  - id: semantic-threadpool-context
+    type: semantic
+    query: Exit a blocking context manager safely in a thread pool.
+    verification: source
+    evidence: fastapi/concurrency.py:16 (pinned source inspected)
+    relevant:
+      - path: fastapi/concurrency.py
+        start_line: 16
+        end_line: 16
+        symbol: fastapi.concurrency.contextmanager_in_threadpool
+  - id: identifier-fastapi-add-api-route
+    type: identifier
+    query: FastAPI.add_api_route
+    verification: source
+    evidence: fastapi/applications.py:1056 (pinned source inspected)
+    relevant:
+      - path: fastapi/applications.py
+        start_line: 1056
+        end_line: 1056
+        symbol: fastapi.applications.FastAPI.add_api_route
+  - id: identifier-api-router-include-router
+    type: identifier
+    query: APIRouter.include_router
+    verification: source
+    evidence: fastapi/routing.py:1120 (pinned source inspected)
+    relevant:
+      - path: fastapi/routing.py
+        start_line: 1120
+        end_line: 1120
+        symbol: fastapi.routing.APIRouter.include_router
+  - id: identifier-api-route-handler
+    type: identifier
+    query: APIRoute.get_route_handler
+    verification: source
+    evidence: fastapi/routing.py:569 (pinned source inspected)
+    relevant:
+      - path: fastapi/routing.py
+        start_line: 569
+        end_line: 569
+        symbol: fastapi.routing.APIRoute.get_route_handler
+  - id: identifier-oauth2-password-bearer
+    type: identifier
+    query: OAuth2PasswordBearer
+    verification: source
+    evidence: fastapi/security/oauth2.py:391 (pinned source inspected)
+    relevant:
+      - path: fastapi/security/oauth2.py
+        start_line: 391
+        end_line: 391
+        symbol: fastapi.security.oauth2.OAuth2PasswordBearer
+  - id: identifier-http-bearer
+    type: identifier
+    query: HTTPBearer
+    verification: source
+    evidence: fastapi/security/http.py:220 (pinned source inspected)
+    relevant:
+      - path: fastapi/security/http.py
+        start_line: 220
+        end_line: 220
+        symbol: fastapi.security.http.HTTPBearer
+  - id: identifier-api-key-header
+    type: identifier
+    query: APIKeyHeader
+    verification: source
+    evidence: fastapi/security/api_key.py:114 (pinned source inspected)
+    relevant:
+      - path: fastapi/security/api_key.py
+        start_line: 114
+        end_line: 114
+        symbol: fastapi.security.api_key.APIKeyHeader
+  - id: identifier-jsonable-encoder
+    type: identifier
+    query: jsonable_encoder
+    verification: source
+    evidence: fastapi/encoders.py:102 (pinned source inspected)
+    relevant:
+      - path: fastapi/encoders.py
+        start_line: 102
+        end_line: 102
+        symbol: fastapi.encoders.jsonable_encoder
+  - id: identifier-get-openapi
+    type: identifier
+    query: get_openapi
+    verification: source
+    evidence: fastapi/openapi/utils.py:456 (pinned source inspected)
+    relevant:
+      - path: fastapi/openapi/utils.py
+        start_line: 456
+        end_line: 456
+        symbol: fastapi.openapi.utils.get_openapi

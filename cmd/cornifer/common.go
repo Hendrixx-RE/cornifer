@@ -9,6 +9,7 @@ import (
 
 	"github.com/Hendrixx-RE/cornifer/internal/embed"
 	"github.com/Hendrixx-RE/cornifer/internal/indexer"
+	"github.com/Hendrixx-RE/cornifer/internal/model"
 	"github.com/Hendrixx-RE/cornifer/internal/store"
 )
 
@@ -24,7 +25,7 @@ type globalFlags struct {
 }
 
 func addGlobalFlags(cmd *cobra.Command, f *globalFlags) {
-	cmd.Flags().StringVar(&f.cacheDir, "cache-dir", "", "directory for the local manifest/BM25 cache (default: "+indexer.DefaultCacheDirName+")")
+	cmd.Flags().StringVar(&f.cacheDir, "cache-dir", "", "directory for the local BM25 cache (default: "+indexer.DefaultCacheDirName+")")
 }
 
 // addRepoFlag adds the --repo flag shared by index/reindex and every
@@ -48,8 +49,8 @@ func openStore(ctx context.Context) (store.Store, error) {
 	return st, nil
 }
 
-// openSession connects to Postgres and loads the cached Manifest/Graph for
-// repoPath, for every read-only command.
+// openSession connects to Postgres and bulk-loads the indexed catalog/graph
+// for repoPath. The only local cache still used by read commands is BM25.
 func openSession(ctx context.Context, repoPath string, f *globalFlags) (*indexer.Session, store.Store, error) {
 	st, err := openStore(ctx)
 	if err != nil {
@@ -74,7 +75,56 @@ func logf(format string, args ...any) {
 // that need an Embedder (index, query).
 func embedderProviderFlag(cmd *cobra.Command, provider *string) {
 	cmd.Flags().StringVar(provider, "embed-provider", "",
-		fmt.Sprintf("embedding provider: %q, %q, or %q (default: %q if %s is set, else %q)",
-			embed.ProviderVoyage, embed.ProviderSidecar, embed.ProviderFake,
-			embed.ProviderVoyage, embed.VoyageAPIKeyEnvVar, embed.ProviderFake))
+		fmt.Sprintf("embedding provider: %q, %q, %q, or %q (explicit CORNIFER_EMBEDDING_PROVIDER, otherwise legacy Voyage-key/fake default)",
+			embed.ProviderGemini, embed.ProviderVoyage, embed.ProviderSidecar, embed.ProviderFake))
+}
+
+// embedderProviderForRepo selects the embedding space stored with a snapshot.
+// A caller may explicitly repeat it, but may not silently query vectors with
+// a different provider.
+func embedderProviderForRepo(repo *model.Repo, requested embed.Provider) (embed.Provider, error) {
+	if repo == nil || repo.EmbeddingProvider == "" || repo.EmbeddingProvider == "unknown" {
+		return requested, nil
+	}
+	stored := embed.Provider(repo.EmbeddingProvider)
+	if requested != "" && requested != stored {
+		return "", fmt.Errorf("indexed repo uses embedding provider %q, requested %q; reindex before changing vector spaces", stored, requested)
+	}
+	return stored, nil
+}
+
+// embedderConfigForRepo resolves sidecar configuration and rejects a local
+// model that differs from the indexed snapshot. Provider equality alone is
+// insufficient for sidecars because one endpoint can serve many vector spaces.
+func embedderConfigForRepo(repo *model.Repo, requested embed.Provider) (embed.Config, error) {
+	provider, err := embedderProviderForRepo(repo, requested)
+	if err != nil {
+		return embed.Config{}, err
+	}
+	cfg := embed.Config{Provider: provider}
+	if provider == embed.ProviderVoyage {
+		// Voyage uses a retrieval-specific prompt for user queries. The indexer
+		// retains the provider default (document) while writing chunk vectors.
+		cfg.Voyage.InputType = "query"
+	}
+	cfg = embed.ConfigFromEnvironment(cfg)
+	if provider == embed.ProviderGemini {
+		cfg.Gemini.InputType = "query"
+		if repo != nil {
+			if err := embed.ValidateQuerySpace(repo.EmbeddingProvider, repo.EmbeddingModel, cfg); err != nil {
+				return embed.Config{}, err
+			}
+		}
+		return cfg, nil
+	}
+	if provider != embed.ProviderSidecar {
+		return cfg, nil
+	}
+	if cfg.Sidecar.Model == "" {
+		return embed.Config{}, fmt.Errorf("sidecar-indexed repo requires %s to name the running model and revision", embed.SidecarModelEnvVar)
+	}
+	if repo != nil && repo.EmbeddingModel != "" && repo.EmbeddingModel != "unknown" && repo.EmbeddingModel != cfg.Sidecar.Model {
+		return embed.Config{}, fmt.Errorf("indexed repo uses embedding model %q, configured sidecar declares %q; reindex before changing vector spaces", repo.EmbeddingModel, cfg.Sidecar.Model)
+	}
+	return cfg, nil
 }

@@ -17,6 +17,7 @@ type Embedder interface {
 
 // New builds an Embedder from cfg, selected by cfg.Provider:
 //
+//   - ProviderGemini wraps native Gemini embedContent, one request/input.
 //   - ProviderVoyage wraps the Voyage voyage-code-3 HTTP API.
 //   - ProviderSidecar wraps a local HTTP sidecar (sentence-transformers or
 //     text-embeddings-inference) exposing an /embed-style endpoint.
@@ -38,6 +39,9 @@ func New(cfg Config) (Embedder, error) {
 	batchSize := cfg.BatchSize
 	if batchSize <= 0 {
 		batchSize = DefaultBatchSize
+		if cfg.Provider == ProviderSidecar {
+			batchSize = DefaultSidecarBatchSize
+		}
 	}
 	maxRetries := cfg.MaxRetries
 	if maxRetries <= 0 {
@@ -45,6 +49,15 @@ func New(cfg Config) (Embedder, error) {
 	}
 
 	switch cfg.Provider {
+	case ProviderGemini:
+		client, err := newGeminiEmbedder(cfg.Gemini, dim, maxRetries)
+		if err != nil {
+			return nil, err
+		}
+		identity, _ := GeminiIdentity(cfg.Gemini, dim)
+		// Input role is independent of model space: document/query vectors
+		// must never share cache entries, even for identical source text.
+		return maybeCache(client, cfg.CacheDir, "gemini;"+identity+";input_type="+client.inputType, dim), nil
 	case ProviderVoyage:
 		client, err := newVoyageClient(cfg.Voyage, dim)
 		if err != nil {

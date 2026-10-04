@@ -146,18 +146,26 @@ func (s *pgStore) reserveIDs(ctx context.Context, table string, n int) ([]int64,
 // Repos
 
 func (s *pgStore) CreateRepo(ctx context.Context, repo *model.Repo) (int64, error) {
+	if repo.EmbeddingProvider == "" {
+		repo.EmbeddingProvider = "unknown"
+	}
+	if repo.EmbeddingModel == "" {
+		repo.EmbeddingModel = "unknown"
+	}
 	var id int64
 	var indexedAt time.Time
 	var err error
 	if repo.IndexedAt.IsZero() {
 		err = s.pool.QueryRow(ctx,
-			`INSERT INTO repos (root, commit_sha) VALUES ($1, $2) RETURNING id, indexed_at`,
-			repo.Root, repo.CommitSHA,
+			`INSERT INTO repos (root, commit_sha, embedding_provider, embedding_model)
+			 VALUES ($1, $2, $3, $4) RETURNING id, indexed_at`,
+			repo.Root, repo.CommitSHA, repo.EmbeddingProvider, repo.EmbeddingModel,
 		).Scan(&id, &indexedAt)
 	} else {
 		err = s.pool.QueryRow(ctx,
-			`INSERT INTO repos (root, commit_sha, indexed_at) VALUES ($1, $2, $3) RETURNING id, indexed_at`,
-			repo.Root, repo.CommitSHA, repo.IndexedAt,
+			`INSERT INTO repos (root, commit_sha, embedding_provider, embedding_model, indexed_at)
+			 VALUES ($1, $2, $3, $4, $5) RETURNING id, indexed_at`,
+			repo.Root, repo.CommitSHA, repo.EmbeddingProvider, repo.EmbeddingModel, repo.IndexedAt,
 		).Scan(&id, &indexedAt)
 	}
 	if err != nil {
@@ -171,9 +179,10 @@ func (s *pgStore) CreateRepo(ctx context.Context, repo *model.Repo) (int64, erro
 func (s *pgStore) GetRepoByCommit(ctx context.Context, root, commitSHA string) (*model.Repo, error) {
 	var r model.Repo
 	err := s.pool.QueryRow(ctx,
-		`SELECT id, root, commit_sha, indexed_at FROM repos WHERE root = $1 AND commit_sha = $2`,
+		`SELECT id, root, commit_sha, embedding_provider, embedding_model, indexed_at
+		 FROM repos WHERE root = $1 AND commit_sha = $2`,
 		root, commitSHA,
-	).Scan(&r.ID, &r.Root, &r.CommitSHA, &r.IndexedAt)
+	).Scan(&r.ID, &r.Root, &r.CommitSHA, &r.EmbeddingProvider, &r.EmbeddingModel, &r.IndexedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -181,6 +190,36 @@ func (s *pgStore) GetRepoByCommit(ctx context.Context, root, commitSHA string) (
 		return nil, fmt.Errorf("store: get repo by commit: %w", err)
 	}
 	return &r, nil
+}
+
+func (s *pgStore) GetRepoByID(ctx context.Context, repoID int64) (*model.Repo, error) {
+	var r model.Repo
+	err := s.pool.QueryRow(ctx,
+		`SELECT id, root, commit_sha, embedding_provider, embedding_model, indexed_at FROM repos WHERE id = $1`, repoID,
+	).Scan(&r.ID, &r.Root, &r.CommitSHA, &r.EmbeddingProvider, &r.EmbeddingModel, &r.IndexedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("store: get repo by id: %w", err)
+	}
+	return &r, nil
+}
+
+func (s *pgStore) UpdateRepoEmbeddingProvenance(ctx context.Context, repoID int64, provider, model string) error {
+	if provider == "" {
+		provider = "unknown"
+	}
+	if model == "" {
+		model = "unknown"
+	}
+	if _, err := s.pool.Exec(ctx,
+		`UPDATE repos SET embedding_provider = $2, embedding_model = $3 WHERE id = $1`,
+		repoID, provider, model,
+	); err != nil {
+		return fmt.Errorf("store: update repo embedding provenance: %w", err)
+	}
+	return nil
 }
 
 // Files
@@ -439,6 +478,29 @@ func (s *pgStore) GetSymbols(ctx context.Context, ids []int64) (map[int64]*model
 	return out, nil
 }
 
+func (s *pgStore) ListSymbols(ctx context.Context, repoID int64) ([]*model.Symbol, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT s.id, s.file_id, s.kind, s.name, s.qualified_name, s.parent_id, s.start_line, s.end_line, s.signature, s.docstring
+		 FROM symbols s JOIN files f ON f.id = s.file_id
+		 WHERE f.repo_id = $1 ORDER BY s.file_id, s.start_line, s.id`, repoID)
+	if err != nil {
+		return nil, fmt.Errorf("store: list symbols: %w", err)
+	}
+	defer rows.Close()
+	var symbols []*model.Symbol
+	for rows.Next() {
+		sym := &model.Symbol{}
+		if err := rows.Scan(&sym.ID, &sym.FileID, &sym.Kind, &sym.Name, &sym.QualifiedName, &sym.ParentID, &sym.StartLine, &sym.EndLine, &sym.Signature, &sym.Docstring); err != nil {
+			return nil, fmt.Errorf("store: list symbols: %w", err)
+		}
+		symbols = append(symbols, sym)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("store: list symbols: %w", err)
+	}
+	return symbols, nil
+}
+
 // Edges
 
 func (s *pgStore) InsertEdges(ctx context.Context, edges []*model.Edge) error {
@@ -521,6 +583,15 @@ func (s *pgStore) LoadEdges(ctx context.Context, repoID int64) ([]*model.Edge, e
 	)
 }
 
+func (s *pgStore) DeleteEdgesForRepo(ctx context.Context, repoID int64) error {
+	if _, err := s.pool.Exec(ctx,
+		`DELETE FROM edges e USING symbols s, files f
+		 WHERE e.src_symbol_id = s.id AND s.file_id = f.id AND f.repo_id = $1`, repoID); err != nil {
+		return fmt.Errorf("store: delete edges for repo: %w", err)
+	}
+	return nil
+}
+
 // Unresolved refs
 
 func (s *pgStore) InsertUnresolvedRefs(ctx context.Context, refs []*model.UnresolvedRef) error {
@@ -584,6 +655,15 @@ func (s *pgStore) ListUnresolvedRefs(ctx context.Context, repoID int64) ([]*mode
 		return nil, fmt.Errorf("store: list unresolved refs: %w", err)
 	}
 	return refs, nil
+}
+
+func (s *pgStore) DeleteUnresolvedRefsForRepo(ctx context.Context, repoID int64) error {
+	if _, err := s.pool.Exec(ctx,
+		`DELETE FROM unresolved_refs r USING symbols s, files f
+		 WHERE r.src_symbol_id = s.id AND s.file_id = f.id AND f.repo_id = $1`, repoID); err != nil {
+		return fmt.Errorf("store: delete unresolved refs for repo: %w", err)
+	}
+	return nil
 }
 
 // Chunks
@@ -661,26 +741,77 @@ func (s *pgStore) GetChunks(ctx context.Context, ids []int64) (map[int64]*model.
 	return out, nil
 }
 
+func (s *pgStore) ListChunks(ctx context.Context, repoID int64) ([]*model.Chunk, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT c.id, c.symbol_id, c.file_id, c.text, c.context_header, c.token_count, c.start_line, c.end_line
+		 FROM chunks c JOIN files f ON f.id = c.file_id
+		 WHERE f.repo_id = $1 ORDER BY c.file_id, c.start_line, c.id`, repoID)
+	if err != nil {
+		return nil, fmt.Errorf("store: list chunks: %w", err)
+	}
+	defer rows.Close()
+	var chunks []*model.Chunk
+	for rows.Next() {
+		c := &model.Chunk{}
+		if err := rows.Scan(&c.ID, &c.SymbolID, &c.FileID, &c.Text, &c.ContextHeader, &c.TokenCount, &c.StartLine, &c.EndLine); err != nil {
+			return nil, fmt.Errorf("store: list chunks: %w", err)
+		}
+		chunks = append(chunks, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("store: list chunks: %w", err)
+	}
+	return chunks, nil
+}
+
 // VectorSearch validates query against the configured embedding dimension
 // before ever sending it to Postgres, per the store contract that a
 // dimension mismatch must fail fast rather than silently corrupting the
 // HNSW index (see model.DefaultEmbeddingDim's doc comment). Only chunks
 // with a non-null embedding are eligible.
 func (s *pgStore) VectorSearch(ctx context.Context, query []float32, limit int) ([]*model.Chunk, error) {
+	return s.vectorSearch(ctx, "", 0, query, limit)
+}
+
+func (s *pgStore) VectorSearchByRepo(ctx context.Context, repoID int64, query []float32, limit int) ([]*model.Chunk, error) {
+	if repoID <= 0 {
+		return nil, fmt.Errorf("store: vector search by repo: repoID must be positive")
+	}
+	return s.vectorSearch(ctx, "f.repo_id = $2", repoID, query, limit)
+}
+
+func (s *pgStore) vectorSearch(ctx context.Context, repoFilter string, repoID int64, query []float32, limit int) ([]*model.Chunk, error) {
 	if len(query) != s.embeddingDim {
 		return nil, fmt.Errorf("store: vector search: query has %d dims, want %d (see %s)",
 			len(query), s.embeddingDim, model.EmbeddingDimEnvVar)
 	}
 
+	where := "embedding IS NOT NULL"
+	if repoFilter != "" {
+		where += " AND " + repoFilter
+	}
+	join := ""
+	if repoFilter != "" {
+		join = " JOIN files f ON f.id = chunks.file_id"
+	}
+	paramLimit := 2
+	if repoFilter != "" {
+		paramLimit = 3
+	}
 	sql := fmt.Sprintf(
-		`SELECT id, symbol_id, file_id, text, context_header, token_count, start_line, end_line, embedding
-		 FROM chunks
-		 WHERE embedding IS NOT NULL
-		 ORDER BY embedding %s $1
-		 LIMIT $2`,
-		s.distanceOp,
+		`SELECT chunks.id, chunks.symbol_id, chunks.file_id, chunks.text, chunks.context_header, chunks.token_count, chunks.start_line, chunks.end_line, chunks.embedding
+		 FROM chunks%s
+		 WHERE %s
+		 ORDER BY chunks.embedding %s $1
+		 LIMIT $%d`,
+		join, where, s.distanceOp, paramLimit,
 	)
-	rows, err := s.pool.Query(ctx, sql, EncodeVector(query), limit)
+	args := []any{EncodeVector(query)}
+	if repoFilter != "" {
+		args = append(args, repoID)
+	}
+	args = append(args, limit)
+	rows, err := s.pool.Query(ctx, sql, args...)
 	if err != nil {
 		return nil, fmt.Errorf("store: vector search: %w", err)
 	}

@@ -7,24 +7,12 @@
 // criteria. cmd/cornifer is the only caller; keeping this out of package
 // main makes the pipeline unit-testable without a CLI.
 //
-// # Why a local cache, not just Postgres
+// # Read-side storage
 //
-// internal/store's Store interface (as merged for this wave) offers
-// point lookups (FindSymbolByQualifiedName, FindSymbolsByName,
-// GetCallers/GetCallees by one symbol ID) but no bulk "every symbol/edge/
-// chunk in this repo" query — no LoadEdges(repo), no GetSymbols/GetChunks
-// by file, no ListEdges. That is expected: a parallel wave is adding those
-// (see the Store doc comment), and this package was told not to modify
-// internal/store to add them itself.
-//
-// Structural queries (find-definition, callers, callees, blast-radius,
-// cycles) and query's chunk-metadata display need exactly that bulk
-// access, so Index additionally writes a Manifest (see cache.go) — every
-// File, Symbol, Edge, and a lightweight per-Chunk record (without
-// embeddings, which stay in Postgres and are searched via
-// Store.VectorSearch) — to a JSON file on disk, keyed by repo ID. Query
-// commands load the Manifest instead of re-deriving this from Postgres.
-// Once the parallel Store work merges, the Manifest and this indirection
-// can be dropped in favor of loading directly from Store; see cache.go's
-// doc comment for the exact shape kept in sync with that expectation.
+// Store now supplies repo-scoped bulk files, symbols, edges, and chunks.
+// OpenSession bulk-loads those rows each time a CLI command starts, so
+// structural/catalog answers cannot drift from Postgres. Manifest remains an
+// in-memory transport shape shared by existing command rendering code; its
+// old JSON persistence is no longer read. The sole local cache is the
+// persisted BM25 index, keyed by repo ID. Dense search is also repo-scoped.
 package indexer

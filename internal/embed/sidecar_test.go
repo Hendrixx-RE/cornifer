@@ -70,6 +70,24 @@ func TestNewSidecarClientDefaults(t *testing.T) {
 	}
 }
 
+func TestNewSidecarEmbedderUsesBoundedDefaultBatch(t *testing.T) {
+	embedder, err := New(Config{
+		Provider:  ProviderSidecar,
+		Dimension: 4,
+		Sidecar:   SidecarConfig{Endpoint: "http://example.invalid/embed"},
+	})
+	if err != nil {
+		t.Fatalf("New() err = %v", err)
+	}
+	batched, ok := embedder.(*batchingEmbedder)
+	if !ok {
+		t.Fatalf("New() = %T, want *batchingEmbedder", embedder)
+	}
+	if got, want := batched.batchSize, DefaultSidecarBatchSize; got != want {
+		t.Errorf("sidecar default batch size = %d, want %d", got, want)
+	}
+}
+
 func TestSidecarClientRequiresEndpoint(t *testing.T) {
 	_, err := newSidecarClient(SidecarConfig{})
 	if err == nil {

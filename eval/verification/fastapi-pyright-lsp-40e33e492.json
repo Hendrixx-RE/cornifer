@@ -1,0 +1,15 @@
+{
+  "tool": "pyright 1.1.412",
+  "commit": "40e33e492dbf4af6172997f4e3238a32e56cbe26",
+  "corpus": "pinned fastapi/ sparse source checkout",
+  "checks": [
+    {"path": "fastapi/applications.py", "line": 1056, "symbol": "add_api_route", "definition_contains_label": true, "references_contain_label": true, "definition_count": 1, "reference_count": 1},
+    {"path": "fastapi/routing.py", "line": 879, "symbol": "add_api_route", "definition_contains_label": true, "references_contain_label": true, "definition_count": 1, "reference_count": 5},
+    {"path": "fastapi/routing.py", "line": 1120, "symbol": "include_router", "definition_contains_label": true, "references_contain_label": true, "definition_count": 1, "reference_count": 2},
+    {"path": "fastapi/routing.py", "line": 217, "symbol": "get_request_handler", "definition_contains_label": true, "references_contain_label": true, "definition_count": 1, "reference_count": 2},
+    {"path": "fastapi/routing.py", "line": 143, "symbol": "serialize_response", "definition_contains_label": true, "references_contain_label": true, "definition_count": 1, "reference_count": 2},
+    {"path": "fastapi/dependencies/utils.py", "line": 257, "symbol": "get_dependant", "definition_contains_label": true, "references_contain_label": true, "definition_count": 1, "reference_count": 6},
+    {"path": "fastapi/dependencies/utils.py", "line": 562, "symbol": "solve_dependencies", "definition_contains_label": true, "references_contain_label": true, "definition_count": 1, "reference_count": 5}
+  ],
+  "limitations": "The LSP check confirms each labelled structural declaration resolves to and is included in its own Pyright reference set at this pinned commit. It does not establish Cornifer call-edge completeness in dynamic Python; unresolved and heuristic edges remain separately reported by the indexer."
+}

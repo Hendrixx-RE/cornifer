@@ -34,6 +34,12 @@ type Store interface {
 	// SHA. Returns model.ErrNotImplemented's caller-visible "not found"
 	// convention once implemented (documented on the concrete type).
 	GetRepoByCommit(ctx context.Context, root, commitSHA string) (*model.Repo, error)
+	// GetRepoByID loads snapshot metadata for an MCP server configured with a
+	// numeric repository ID.
+	GetRepoByID(ctx context.Context, repoID int64) (*model.Repo, error)
+	// UpdateRepoEmbeddingProvenance records the vector-space metadata used by
+	// a complete (re)index of repoID.
+	UpdateRepoEmbeddingProvenance(ctx context.Context, repoID int64, provider, embeddingModel string) error
 
 	// Files
 
@@ -86,6 +92,9 @@ type Store interface {
 	// GetSymbols looks up symbols by ID. Same map-keyed, missing-is-absent
 	// convention as GetFiles.
 	GetSymbols(ctx context.Context, ids []int64) (map[int64]*model.Symbol, error)
+	// ListSymbols returns every symbol belonging to repoID. It powers current
+	// structural snapshots without relying on a stale local manifest.
+	ListSymbols(ctx context.Context, repoID int64) ([]*model.Symbol, error)
 
 	// Edges
 
@@ -104,6 +113,9 @@ type Store interface {
 	// with a closure or graph.EdgeLoaderFunc, e.g.
 	// graph.EdgeLoaderFunc(func(ctx) { return st.LoadEdges(ctx, repoID) }).
 	LoadEdges(ctx context.Context, repoID int64) ([]*model.Edge, error)
+	// DeleteEdgesForRepo removes all edges sourced from repoID. It supports a
+	// full re-resolution after a file-level incremental update.
+	DeleteEdgesForRepo(ctx context.Context, repoID int64) error
 
 	// Unresolved refs
 
@@ -113,6 +125,9 @@ type Store interface {
 	// symbol belongs to repoID, so recall gaps (see model.UnresolvedRef) can
 	// be inspected or reported per repo.
 	ListUnresolvedRefs(ctx context.Context, repoID int64) ([]*model.UnresolvedRef, error)
+	// DeleteUnresolvedRefsForRepo removes all resolution leftovers for repoID
+	// before rebuilding them from a complete resolver pass.
+	DeleteUnresolvedRefsForRepo(ctx context.Context, repoID int64) error
 
 	// Chunks
 
@@ -123,11 +138,18 @@ type Store interface {
 	// GetChunks looks up chunks by ID. Same map-keyed, missing-is-absent
 	// convention as GetFiles.
 	GetChunks(ctx context.Context, ids []int64) (map[int64]*model.Chunk, error)
+	// ListChunks returns every chunk belonging to repoID without embeddings,
+	// for display and evaluation metadata hydration.
+	ListChunks(ctx context.Context, repoID int64) ([]*model.Chunk, error)
 	// VectorSearch returns the limit chunks with embeddings nearest to
 	// query, ordered closest first, using the HNSW index on
 	// chunks.embedding. len(query) must equal the configured embedding
 	// dimension.
 	VectorSearch(ctx context.Context, query []float32, limit int) ([]*model.Chunk, error)
+	// VectorSearchByRepo is VectorSearch scoped to a single indexed snapshot.
+	// Callers serving a repository must use this method to prevent cross-repo
+	// retrieval when the database contains several snapshots.
+	VectorSearchByRepo(ctx context.Context, repoID int64, query []float32, limit int) ([]*model.Chunk, error)
 
 	// Close releases the underlying connection pool.
 	Close() error
@@ -149,6 +171,14 @@ func (unimplemented) CreateRepo(ctx context.Context, repo *model.Repo) (int64, e
 
 func (unimplemented) GetRepoByCommit(ctx context.Context, root, commitSHA string) (*model.Repo, error) {
 	return nil, model.ErrNotImplemented
+}
+
+func (unimplemented) GetRepoByID(ctx context.Context, repoID int64) (*model.Repo, error) {
+	return nil, model.ErrNotImplemented
+}
+
+func (unimplemented) UpdateRepoEmbeddingProvenance(ctx context.Context, repoID int64, provider, embeddingModel string) error {
+	return model.ErrNotImplemented
 }
 
 func (unimplemented) UpsertFiles(ctx context.Context, files []*model.File) error {
@@ -191,6 +221,10 @@ func (unimplemented) GetSymbols(ctx context.Context, ids []int64) (map[int64]*mo
 	return nil, model.ErrNotImplemented
 }
 
+func (unimplemented) ListSymbols(ctx context.Context, repoID int64) ([]*model.Symbol, error) {
+	return nil, model.ErrNotImplemented
+}
+
 func (unimplemented) InsertEdges(ctx context.Context, edges []*model.Edge) error {
 	return model.ErrNotImplemented
 }
@@ -207,12 +241,20 @@ func (unimplemented) LoadEdges(ctx context.Context, repoID int64) ([]*model.Edge
 	return nil, model.ErrNotImplemented
 }
 
+func (unimplemented) DeleteEdgesForRepo(ctx context.Context, repoID int64) error {
+	return model.ErrNotImplemented
+}
+
 func (unimplemented) InsertUnresolvedRefs(ctx context.Context, refs []*model.UnresolvedRef) error {
 	return model.ErrNotImplemented
 }
 
 func (unimplemented) ListUnresolvedRefs(ctx context.Context, repoID int64) ([]*model.UnresolvedRef, error) {
 	return nil, model.ErrNotImplemented
+}
+
+func (unimplemented) DeleteUnresolvedRefsForRepo(ctx context.Context, repoID int64) error {
+	return model.ErrNotImplemented
 }
 
 func (unimplemented) InsertChunks(ctx context.Context, chunks []*model.Chunk) error {
@@ -223,7 +265,15 @@ func (unimplemented) GetChunks(ctx context.Context, ids []int64) (map[int64]*mod
 	return nil, model.ErrNotImplemented
 }
 
+func (unimplemented) ListChunks(ctx context.Context, repoID int64) ([]*model.Chunk, error) {
+	return nil, model.ErrNotImplemented
+}
+
 func (unimplemented) VectorSearch(ctx context.Context, query []float32, limit int) ([]*model.Chunk, error) {
+	return nil, model.ErrNotImplemented
+}
+
+func (unimplemented) VectorSearchByRepo(ctx context.Context, repoID int64, query []float32, limit int) ([]*model.Chunk, error) {
 	return nil, model.ErrNotImplemented
 }
 

@@ -20,6 +20,13 @@ type Repo struct {
 	// specific, reproducible state of the target repo.
 	CommitSHA string
 
+	// EmbeddingProvider and EmbeddingModel identify the exact vector space
+	// used for chunks in this snapshot. They are persisted with the repo so
+	// query/eval never has to guess from a process environment or a cache.
+	// "unknown" is retained for rows indexed before provenance was added.
+	EmbeddingProvider string
+	EmbeddingModel    string
+
 	// IndexedAt is when this Repo's indexing run completed.
 	IndexedAt time.Time
 }

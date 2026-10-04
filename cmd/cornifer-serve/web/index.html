@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="application-name" content="Cornifer">
+  <meta name="theme-color" content="#282828">
+  <title>Cornifer</title>
+  <link rel="icon" type="image/png" href="/brand/cornifer.png?v=brand-2">
+  <link rel="apple-touch-icon" href="/brand/cornifer.png?v=brand-2">
+  <link rel="stylesheet" href="/styles.css?v=brand-2">
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to main content</a>
+  <header class="utility"><button id="settings-open" class="quiet" aria-haspopup="dialog">Settings <span aria-hidden="true">⋯</span></button></header>
+  <main id="main" class="app" tabindex="-1" data-view="entry">
+    <section id="entry" class="entry" aria-labelledby="wordmark">
+      <h1 id="wordmark" class="wordmark"><img class="brand-logo" src="/brand/cornifer.png?v=brand-2" width="1373" height="1145" alt="Cornifer"><span aria-hidden="true">cornifer<span class="brand-dot">.</span></span></h1>
+      <form id="repo-form" class="input-line" novalidate>
+        <label class="sr-only" for="repo-url">Public GitHub repository URL</label>
+        <input id="repo-url" type="url" placeholder="https://github.com/owner/repository" autocomplete="url" required autofocus>
+        <button id="start" class="submit" type="submit" aria-label="Index repository">↵</button>
+      </form>
+      <p id="entry-status" class="hint" role="status">A public repository. A pinned snapshot. Your questions.</p>
+      <button id="existing-open" class="quiet small" hidden>Use an indexed snapshot</button>
+    </section>
+    <section id="indexing" class="indexing" aria-labelledby="phase" hidden>
+      <a class="small-brand brand-home" href="/" aria-label="Cornifer home"><img class="brand-logo" src="/brand/cornifer.png?v=brand-2" width="1373" height="1145" alt=""><span>cornifer.</span></a>
+      <div id="loading-mark" class="loading-mark" aria-hidden="true"><i></i><i></i><i></i></div>
+      <h1 id="phase" class="phase" role="status">Queuing repository</h1>
+      <p id="index-name" class="hint"></p>
+      <p id="index-detail" class="hint"></p>
+      <div class="inline-actions"><button id="cancel-job" class="quiet" hidden>Cancel indexing</button><button id="retry-job" class="quiet" hidden>Retry indexing</button><button id="index-back" class="quiet">Change repository</button></div>
+    </section>
+    <section id="query" class="query" aria-labelledby="query-brand" hidden>
+      <h1 id="query-brand" class="wordmark compact"><a class="brand-home" href="/" aria-label="Cornifer home"><img class="brand-logo" src="/brand/cornifer.png?v=brand-2" width="1373" height="1145" alt=""><span>cornifer.</span></a></h1>
+      <div class="repo-indicator"><span id="repo-name"></span><code id="commit"></code><span id="fixture-label" class="fixture-label" hidden>verification fixture</span><button id="change-repo" class="quiet small">Change repo</button></div>
+      <form id="question-form" class="input-line question-line">
+        <label class="sr-only" for="question">Ask a question about this repository</label>
+        <textarea id="question" rows="1" placeholder="How does this code work?" required></textarea>
+        <button id="ask" class="submit" type="submit" aria-label="Ask question">↵</button>
+      </form>
+      <p id="question-status" class="hint" role="status"></p>
+      <section id="results" class="results" aria-live="polite" hidden>
+        <div class="result-heading"><span id="result-mode" class="eyebrow"></span><span id="retrieval-mode" class="hint"></span></div>
+        <h2 id="asked-question" class="asked-question"></h2>
+        <div id="answer" class="answer"></div>
+        <div id="symbols" class="symbols"></div>
+        <details id="dependencies" class="detail-block" hidden><summary>Dependencies and relationships <span id="relation-count"></span></summary><p class="hint">Resolved Python relationships in this evidence pack. Confidence describes static resolution, not runtime certainty.</p><div id="relation-list"></div>
+          <div class="graph-tools"><span class="hint">Answer context only</span><button id="zoom-out" class="quiet small" aria-label="Zoom out">−</button><button id="zoom-in" class="quiet small" aria-label="Zoom in">＋</button><button id="graph-fit" class="quiet small">Reset view</button></div>
+          <svg id="dependency-graph" viewBox="0 0 760 340" role="img" aria-label="Answer-relevant dependency graph" tabindex="0"><defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="4" markerHeight="4" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#665c54"/></marker></defs><g id="graph-world"></g></svg><p class="hint">Drag background to pan · scroll to zoom · select a symbol to open source</p>
+        </details>
+        <details id="evidence-details" class="detail-block"><summary>Cited source excerpts <span id="evidence-count"></span></summary><div id="evidence"></div></details>
+        <section id="source" class="source" aria-label="Source preview" hidden><div class="source-heading"><strong id="source-title"></strong><button id="source-close" class="quiet small">Close source</button></div><p id="source-snapshot" class="hint"></p><pre id="source-code"></pre></section>
+        <p id="coverage" class="hint"></p><p id="snapshot" class="snapshot"></p>
+        <button id="follow-up" class="quiet">Ask a follow-up ↑</button>
+      </section>
+    </section>
+  </main>
+  <dialog id="settings" aria-labelledby="settings-title">
+    <div class="dialog-heading"><h2 id="settings-title">Settings & connections</h2><button id="settings-close" class="quiet" aria-label="Close settings">×</button></div>
+    <section><h3>Repository snapshots</h3><label for="saved-repo">Choose a snapshot</label><select id="saved-repo"><option value="">Choose a saved snapshot…</option></select><div class="inline-actions"><button id="open-snapshot" class="quiet">Open snapshot</button><button id="refresh-repos" class="quiet small">Refresh</button></div><label for="repo-ref">Git ref for the next intake (optional)</label><input id="repo-ref" placeholder="Branch, tag, or full commit SHA"><p class="hint">Blank resolves remote HEAD. Existing snapshots stay pinned.</p></section>
+    <section><h3>Hosted services</h3><p id="provider-state" class="hint"></p><p class="hint">Gemini embeddings use GEMINI_API_KEY with provider gemini. Voyage is optional. Keys stay in the server environment; hosted chat is configured separately. Restart after changes. No local inference.</p></section>
+    <section><h3>MCP</h3><code id="mcp-url" class="endpoint"></code><div class="inline-actions"><button id="copy-mcp" class="quiet">Copy endpoint</button><button id="copy-config" class="quiet">Copy config</button></div><p id="copy-status" class="hint" role="status">Streamable HTTP · same source context as this website.</p></section>
+    <section><h3>Session memory</h3><p id="session-status" class="hint">A successful question starts a session for this snapshot.</p><code id="session-id" class="endpoint"></code><div id="memory-events"></div><form id="note-form" hidden><label for="note">Remember a decision</label><textarea id="note" rows="2" maxlength="2000"></textarea><div class="inline-actions"><button class="quiet" type="submit">Save note</button><button id="clear-session" class="quiet" type="button">Clear session</button></div></form><p class="hint">Notes persist explicitly. They are not automatically recalled into answers. Clear deletes this session and its events.</p></section>
+  </dialog>
+  <script src="/app.js?v=brand-2"></script>
+</body>
+</html>

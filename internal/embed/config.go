@@ -2,6 +2,9 @@ package embed
 
 import (
 	"net/http"
+	"os"
+	"path/filepath"
+	"strconv"
 	"time"
 )
 
@@ -9,6 +12,8 @@ import (
 type Provider string
 
 const (
+	// ProviderGemini uses the hosted Gemini API's native embedContent endpoint.
+	ProviderGemini Provider = "gemini"
 	// ProviderVoyage calls the hosted Voyage voyage-code-3 API — plan.md's
 	// primary embedding bridge choice.
 	ProviderVoyage Provider = "voyage"
@@ -22,11 +27,15 @@ const (
 
 // Defaults used when the corresponding Config field is zero.
 const (
-	DefaultBatchSize   = 128
-	DefaultMaxRetries  = 5
-	DefaultRetryBase   = 500 * time.Millisecond
-	DefaultRetryMax    = 30 * time.Second
-	DefaultHTTPTimeout = 60 * time.Second
+	DefaultBatchSize = 128
+	// DefaultSidecarBatchSize keeps a CPU-hosted local model within the
+	// default HTTP deadline. Hosted providers accept the larger generic
+	// DefaultBatchSize, but a sidecar commonly subdivides work internally.
+	DefaultSidecarBatchSize = 8
+	DefaultMaxRetries       = 5
+	DefaultRetryBase        = 500 * time.Millisecond
+	DefaultRetryMax         = 30 * time.Second
+	DefaultHTTPTimeout      = 60 * time.Second
 
 	DefaultVoyageModel   = "voyage-code-3"
 	DefaultVoyageBaseURL = "https://api.voyageai.com/v1/embeddings"
@@ -34,6 +43,21 @@ const (
 	// VoyageAPIKeyEnvVar is the environment variable the Voyage client reads
 	// its API key from when Config.Voyage.APIKey is empty.
 	VoyageAPIKeyEnvVar = "VOYAGE_API_KEY"
+
+	// SidecarEndpointEnvVar and SidecarModelEnvVar configure a local embedding
+	// sidecar for CLI/MCP callers. Keeping the model identifier separate from
+	// the endpoint lets indexed snapshots record a reproducible vector-space
+	// identity (including a model revision), rather than merely an address.
+	SidecarEndpointEnvVar = "CORNIFER_SIDECAR_ENDPOINT"
+	SidecarModelEnvVar    = "CORNIFER_SIDECAR_MODEL"
+	// SidecarBatchSizeEnvVar controls both Cornifer's request size and, for
+	// tools/local_embed_sidecar.py, the model's inner CPU batch size. It is
+	// intentionally sidecar-specific so hosted-provider batching is unchanged.
+	SidecarBatchSizeEnvVar = "CORNIFER_SIDECAR_BATCH_SIZE"
+	// SidecarTimeoutSecondsEnvVar optionally extends the HTTP deadline for a
+	// CPU-hosted sidecar. The ordinary 60-second default remains appropriate
+	// for hosted providers and small local requests.
+	SidecarTimeoutSecondsEnvVar = "CORNIFER_SIDECAR_TIMEOUT_SECONDS"
 )
 
 // Config selects and configures the Embedder built by New.
@@ -46,8 +70,8 @@ type Config struct {
 	// model.DefaultEmbeddingDim).
 	Dimension int
 
-	// BatchSize caps how many texts are sent per provider request. Zero
-	// means DefaultBatchSize.
+	// BatchSize caps texts per Voyage/sidecar request. Gemini always sends
+	// one input per native request. Zero means DefaultBatchSize.
 	BatchSize int
 
 	// MaxRetries caps retry attempts on 429/5xx/network errors. Zero means
@@ -60,6 +84,7 @@ type Config struct {
 	CacheDir string
 
 	Voyage  VoyageConfig
+	Gemini  GeminiConfig
 	Sidecar SidecarConfig
 }
 
@@ -74,6 +99,10 @@ type VoyageConfig struct {
 	// Model is the Voyage model name sent in each request. Empty means
 	// DefaultVoyageModel.
 	Model string
+
+	// InputType selects Voyage's retrieval prompt. Empty means "document" for
+	// indexing; query/eval/MCP callers explicitly select "query".
+	InputType string
 
 	// BaseURL is the embeddings endpoint. Empty means DefaultVoyageBaseURL.
 	BaseURL string
@@ -96,4 +125,61 @@ type SidecarConfig struct {
 	Model string
 
 	HTTPClient *http.Client
+}
+
+// ConfigFromEnvironment fills only missing Gemini/sidecar settings from the process
+// environment. Callers that provide Config fields explicitly retain those
+// values, which keeps tests and embedded use independent of ambient config.
+// It intentionally does not choose a provider; provider selection belongs to
+// the caller because the safe default remains the deterministic fake embedder.
+func ConfigFromEnvironment(cfg Config) Config {
+	if cfg.Provider == ProviderGemini {
+		// Hosted Gemini CLI/MCP callers retain unchanged input vectors across
+		// processes. Companion supplies its own explicit shared cache path.
+		if cfg.CacheDir == "" {
+			cfg.CacheDir = os.Getenv("CORNIFER_EMBEDDING_CACHE_DIR")
+			if cfg.CacheDir == "" {
+				cfg.CacheDir = filepath.Join(".cornifer-cache", "embeddings")
+			}
+		}
+		if cfg.Gemini.APIKey == "" {
+			cfg.Gemini.APIKey = os.Getenv("CORNIFER_EMBEDDING_API_KEY")
+			if cfg.Gemini.APIKey == "" {
+				cfg.Gemini.APIKey = os.Getenv(GeminiAPIKeyEnvVar)
+			}
+		}
+		if cfg.Gemini.Model == "" {
+			cfg.Gemini.Model = os.Getenv("CORNIFER_EMBEDDING_MODEL")
+		}
+		if cfg.Gemini.BaseURL == "" {
+			cfg.Gemini.BaseURL = os.Getenv("CORNIFER_EMBEDDING_BASE_URL")
+		}
+		if cfg.Gemini.Concurrency == 0 {
+			cfg.Gemini.Concurrency, _ = strconv.Atoi(os.Getenv("CORNIFER_GEMINI_CONCURRENCY"))
+		}
+		if cfg.Gemini.RequestsPerMinute == 0 {
+			cfg.Gemini.RequestsPerMinute, _ = strconv.Atoi(os.Getenv("CORNIFER_GEMINI_REQUESTS_PER_MINUTE"))
+		}
+		return cfg
+	}
+	if cfg.Provider != ProviderSidecar {
+		return cfg
+	}
+	if cfg.Sidecar.Endpoint == "" {
+		cfg.Sidecar.Endpoint = os.Getenv(SidecarEndpointEnvVar)
+	}
+	if cfg.Sidecar.Model == "" {
+		cfg.Sidecar.Model = os.Getenv(SidecarModelEnvVar)
+	}
+	if cfg.BatchSize == 0 {
+		if batchSize, err := strconv.Atoi(os.Getenv(SidecarBatchSizeEnvVar)); err == nil && batchSize > 0 {
+			cfg.BatchSize = batchSize
+		}
+	}
+	if cfg.Sidecar.HTTPClient == nil {
+		if seconds, err := strconv.Atoi(os.Getenv(SidecarTimeoutSecondsEnvVar)); err == nil && seconds > 0 {
+			cfg.Sidecar.HTTPClient = &http.Client{Timeout: time.Duration(seconds) * time.Second}
+		}
+	}
+	return cfg
 }
