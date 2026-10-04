@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark">
   <title>Cornifer</title>
-  <link rel="stylesheet" href="/styles.css?v=sequential-3">
+  <link rel="stylesheet" href="/styles.css?v=gemini-1">
 </head>
 <body>
   <a class="skip-link" href="#main">Skip to main content</a>
@@ -57,10 +57,10 @@
   <dialog id="settings" aria-labelledby="settings-title">
     <div class="dialog-heading"><h2 id="settings-title">Settings & connections</h2><button id="settings-close" class="quiet" aria-label="Close settings">×</button></div>
     <section><h3>Repository snapshots</h3><label for="saved-repo">Choose a snapshot</label><select id="saved-repo"><option value="">Choose a saved snapshot…</option></select><div class="inline-actions"><button id="open-snapshot" class="quiet">Open snapshot</button><button id="refresh-repos" class="quiet small">Refresh</button></div><label for="repo-ref">Git ref for the next intake (optional)</label><input id="repo-ref" placeholder="Branch, tag, or full commit SHA"><p class="hint">Blank resolves remote HEAD. Existing snapshots stay pinned.</p></section>
-    <section><h3>Hosted services</h3><p id="provider-state" class="hint"></p><p class="hint">Keys stay in the server environment. Voyage embeddings and hosted chat are configured separately; restart after changes. No local inference.</p></section>
+    <section><h3>Hosted services</h3><p id="provider-state" class="hint"></p><p class="hint">Gemini embeddings use GEMINI_API_KEY with provider gemini. Voyage is optional. Keys stay in the server environment; hosted chat is configured separately. Restart after changes. No local inference.</p></section>
     <section><h3>MCP</h3><code id="mcp-url" class="endpoint"></code><div class="inline-actions"><button id="copy-mcp" class="quiet">Copy endpoint</button><button id="copy-config" class="quiet">Copy config</button></div><p id="copy-status" class="hint" role="status">Streamable HTTP · same source context as this website.</p></section>
     <section><h3>Session memory</h3><p id="session-status" class="hint">A successful question starts a session for this snapshot.</p><code id="session-id" class="endpoint"></code><div id="memory-events"></div><form id="note-form" hidden><label for="note">Remember a decision</label><textarea id="note" rows="2" maxlength="2000"></textarea><div class="inline-actions"><button class="quiet" type="submit">Save note</button><button id="clear-session" class="quiet" type="button">Clear session</button></div></form><p class="hint">Notes persist explicitly. They are not automatically recalled into answers. Clear deletes this session and its events.</p></section>
   </dialog>
-  <script src="/app.js?v=sequential-3"></script>
+  <script src="/app.js?v=gemini-1"></script>
 </body>
 </html>

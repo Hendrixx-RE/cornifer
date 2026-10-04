@@ -75,9 +75,8 @@ func logf(format string, args ...any) {
 // that need an Embedder (index, query).
 func embedderProviderFlag(cmd *cobra.Command, provider *string) {
 	cmd.Flags().StringVar(provider, "embed-provider", "",
-		fmt.Sprintf("embedding provider: %q, %q, or %q (default: %q if %s is set, else %q)",
-			embed.ProviderVoyage, embed.ProviderSidecar, embed.ProviderFake,
-			embed.ProviderVoyage, embed.VoyageAPIKeyEnvVar, embed.ProviderFake))
+		fmt.Sprintf("embedding provider: %q, %q, %q, or %q (explicit CORNIFER_EMBEDDING_PROVIDER, otherwise legacy Voyage-key/fake default)",
+			embed.ProviderGemini, embed.ProviderVoyage, embed.ProviderSidecar, embed.ProviderFake))
 }
 
 // embedderProviderForRepo selects the embedding space stored with a snapshot.
@@ -109,6 +108,15 @@ func embedderConfigForRepo(repo *model.Repo, requested embed.Provider) (embed.Co
 		cfg.Voyage.InputType = "query"
 	}
 	cfg = embed.ConfigFromEnvironment(cfg)
+	if provider == embed.ProviderGemini {
+		cfg.Gemini.InputType = "query"
+		if repo != nil {
+			if err := embed.ValidateQuerySpace(repo.EmbeddingProvider, repo.EmbeddingModel, cfg); err != nil {
+				return embed.Config{}, err
+			}
+		}
+		return cfg, nil
+	}
 	if provider != embed.ProviderSidecar {
 		return cfg, nil
 	}

@@ -108,22 +108,30 @@ export CORNIFER_DATABASE_URL='postgres://…/cornifer_hosted?sslmode=disable'
 export CORNIFER_EMBEDDING_DIM=1024
 export CORNIFER_COMPANION_DIR="$PWD/.cornifer-companion"
 
-# Embeddings and chat are independently configured. Voyage is the current
-# hosted embedding adapter; use a new database migrated at its output dimension.
-export CORNIFER_EMBEDDING_PROVIDER=voyage
-export CORNIFER_EMBEDDING_MODEL=voyage-code-3
-export CORNIFER_EMBEDDING_API_KEY='…'
+# Embeddings and chat are configured separately. Native Gemini is supported;
+# Voyage remains optional. Keep the existing user database at 1024 dimensions.
+export CORNIFER_EMBEDDING_PROVIDER=gemini
+export CORNIFER_EMBEDDING_MODEL=gemini-embedding-2
+# Enter the key silently, then press Enter (bash/zsh):
+read -r -s GEMINI_API_KEY
+export GEMINI_API_KEY
 
 # Optional cited answer generation through an OpenAI-compatible endpoint.
 export CORNIFER_CHAT_PROVIDER=openai_compatible
 export CORNIFER_CHAT_BASE_URL='https://provider.example/v1/chat/completions'
 export CORNIFER_CHAT_MODEL='chosen-small-model'
-export CORNIFER_CHAT_API_KEY='…'
+# Read/export CORNIFER_CHAT_API_KEY separately; embedding keys do not enable chat.
 
 go run ./cmd/migrate up
 go run ./cmd/cornifer-serve
 # Website: http://127.0.0.1:7788  ·  MCP: http://127.0.0.1:7788/mcp
 ```
+
+Gemini uses one native online request per chunk, documented code-retrieval
+prefixes, 1024-d output, bounded retries and role/model/input cache isolation.
+The online free tier has quotas; billed usage and eligible AI Pro credits follow
+the API project billing plan. No real Gemini run has been made during worker
+verification. See the guide for source-backed setup/cost details.
 
 Without hosted embedding credentials, indexing enters an explicit
 `awaiting_credentials` state; it never substitutes fake or local vectors.

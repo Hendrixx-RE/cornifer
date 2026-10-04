@@ -22,12 +22,14 @@ import (
 // serializes API keys. The companion process, rather than the browser, reads
 // these values from its environment.
 type RuntimeConfig struct {
-	DataDir            string
-	EmbeddingProvider  string
-	EmbeddingModel     string
-	EmbeddingBaseURL   string
-	EmbeddingAPIKey    string
-	EmbeddingDimension int
+	DataDir                 string
+	EmbeddingProvider       string
+	EmbeddingModel          string
+	EmbeddingBaseURL        string
+	EmbeddingAPIKey         string `json:"-"`
+	EmbeddingDimension      int
+	GeminiConcurrency       int
+	GeminiRequestsPerMinute int
 }
 
 func RuntimeConfigFromEnv() RuntimeConfig {
@@ -35,18 +37,27 @@ func RuntimeConfigFromEnv() RuntimeConfig {
 	if dataDir == "" {
 		dataDir = ".cornifer-companion"
 	}
+	provider := strings.ToLower(strings.TrimSpace(os.Getenv("CORNIFER_EMBEDDING_PROVIDER")))
 	key := os.Getenv("CORNIFER_EMBEDDING_API_KEY")
 	if key == "" {
-		key = os.Getenv(embed.VoyageAPIKeyEnvVar)
+		if provider == string(embed.ProviderGemini) {
+			key = os.Getenv(embed.GeminiAPIKeyEnvVar)
+		} else if provider == string(embed.ProviderVoyage) {
+			key = os.Getenv(embed.VoyageAPIKeyEnvVar)
+		}
 	}
 	dim, _ := strconv.Atoi(os.Getenv("CORNIFER_EMBEDDING_DIM"))
+	concurrency, _ := strconv.Atoi(os.Getenv("CORNIFER_GEMINI_CONCURRENCY"))
+	rpm, _ := strconv.Atoi(os.Getenv("CORNIFER_GEMINI_REQUESTS_PER_MINUTE"))
 	return RuntimeConfig{
-		DataDir:            dataDir,
-		EmbeddingProvider:  strings.ToLower(strings.TrimSpace(os.Getenv("CORNIFER_EMBEDDING_PROVIDER"))),
-		EmbeddingModel:     strings.TrimSpace(os.Getenv("CORNIFER_EMBEDDING_MODEL")),
-		EmbeddingBaseURL:   strings.TrimSpace(os.Getenv("CORNIFER_EMBEDDING_BASE_URL")),
-		EmbeddingAPIKey:    key,
-		EmbeddingDimension: dim,
+		DataDir:                 dataDir,
+		EmbeddingProvider:       provider,
+		EmbeddingModel:          strings.TrimSpace(os.Getenv("CORNIFER_EMBEDDING_MODEL")),
+		EmbeddingBaseURL:        strings.TrimSpace(os.Getenv("CORNIFER_EMBEDDING_BASE_URL")),
+		EmbeddingAPIKey:         key,
+		EmbeddingDimension:      dim,
+		GeminiConcurrency:       concurrency,
+		GeminiRequestsPerMinute: rpm,
 	}
 }
 
@@ -54,11 +65,31 @@ func (c RuntimeConfig) configuredEmbedding() bool {
 	return c.EmbeddingProvider != "" && c.EmbeddingAPIKey != ""
 }
 
+func (c RuntimeConfig) EffectiveEmbeddingModel() string {
+	if c.EmbeddingModel != "" {
+		return c.EmbeddingModel
+	}
+	switch embed.Provider(c.EmbeddingProvider) {
+	case embed.ProviderGemini:
+		return embed.DefaultGeminiModel
+	case embed.ProviderVoyage:
+		return embed.DefaultVoyageModel
+	}
+	return ""
+}
+
 func (c RuntimeConfig) embedConfig(query bool, cacheDir string) (embed.Config, error) {
 	if !c.configuredEmbedding() {
 		return embed.Config{}, ErrCredentialRequired
 	}
 	switch embed.Provider(c.EmbeddingProvider) {
+	case embed.ProviderGemini:
+		role := "document"
+		if query {
+			role = "query"
+		}
+		return embed.Config{Provider: embed.ProviderGemini, Dimension: c.EmbeddingDimension, CacheDir: cacheDir,
+			Gemini: embed.GeminiConfig{APIKey: c.EmbeddingAPIKey, Model: c.EmbeddingModel, BaseURL: c.EmbeddingBaseURL, InputType: role, Concurrency: c.GeminiConcurrency, RequestsPerMinute: c.GeminiRequestsPerMinute}}, nil
 	case embed.ProviderVoyage:
 		inputType := "document"
 		if query {
@@ -67,11 +98,19 @@ func (c RuntimeConfig) embedConfig(query bool, cacheDir string) (embed.Config, e
 		return embed.Config{Provider: embed.ProviderVoyage, Dimension: c.EmbeddingDimension, CacheDir: cacheDir,
 			Voyage: embed.VoyageConfig{APIKey: c.EmbeddingAPIKey, Model: c.EmbeddingModel, BaseURL: c.EmbeddingBaseURL, InputType: inputType}}, nil
 	default:
-		return embed.Config{}, fmt.Errorf("companion: embedding provider %q is not supported; configure voyage", c.EmbeddingProvider)
+		return embed.Config{}, fmt.Errorf("companion: embedding provider %q is not supported; configure gemini or voyage", c.EmbeddingProvider)
 	}
 }
 
 func (c RuntimeConfig) ProviderFingerprint() string {
+	if c.EmbeddingProvider == string(embed.ProviderGemini) {
+		identity, err := embed.GeminiIdentity(embed.GeminiConfig{Model: c.EmbeddingModel, BaseURL: c.EmbeddingBaseURL}, c.EmbeddingDimension)
+		if err != nil {
+			identity = "invalid Gemini configuration"
+		}
+		sum := sha256.Sum256([]byte("gemini\x00" + identity + "\x00" + IndexVersion))
+		return hex.EncodeToString(sum[:])
+	}
 	model := c.EmbeddingModel
 	if model == "" && c.EmbeddingProvider == string(embed.ProviderVoyage) {
 		model = embed.DefaultVoyageModel

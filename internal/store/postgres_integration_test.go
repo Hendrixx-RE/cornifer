@@ -391,12 +391,14 @@ func TestChunkLinesRoundTrip(t *testing.T) {
 		t.Fatalf("InsertChunks() error = %v", err)
 	}
 
-	results, err := s.VectorSearch(ctx, embedded, 1)
+	// Other package fixtures may share this isolated test database. Scope the
+	// line-roundtrip assertion to this snapshot, as companion retrieval does.
+	results, err := s.VectorSearchByRepo(ctx, repo.ID, embedded, 1)
 	if err != nil {
-		t.Fatalf("VectorSearch() error = %v", err)
+		t.Fatalf("VectorSearchByRepo() error = %v", err)
 	}
 	if len(results) != 1 || results[0].StartLine != 42 || results[0].EndLine != 44 {
-		t.Fatalf("VectorSearch() = %+v, want StartLine=42 EndLine=44", results)
+		t.Fatalf("VectorSearchByRepo() = %+v, want StartLine=42 EndLine=44", results)
 	}
 }
 

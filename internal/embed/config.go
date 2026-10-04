@@ -3,6 +3,7 @@ package embed
 import (
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"time"
 )
@@ -11,6 +12,8 @@ import (
 type Provider string
 
 const (
+	// ProviderGemini uses the hosted Gemini API's native embedContent endpoint.
+	ProviderGemini Provider = "gemini"
 	// ProviderVoyage calls the hosted Voyage voyage-code-3 API — plan.md's
 	// primary embedding bridge choice.
 	ProviderVoyage Provider = "voyage"
@@ -67,8 +70,8 @@ type Config struct {
 	// model.DefaultEmbeddingDim).
 	Dimension int
 
-	// BatchSize caps how many texts are sent per provider request. Zero
-	// means DefaultBatchSize.
+	// BatchSize caps texts per Voyage/sidecar request. Gemini always sends
+	// one input per native request. Zero means DefaultBatchSize.
 	BatchSize int
 
 	// MaxRetries caps retry attempts on 429/5xx/network errors. Zero means
@@ -81,6 +84,7 @@ type Config struct {
 	CacheDir string
 
 	Voyage  VoyageConfig
+	Gemini  GeminiConfig
 	Sidecar SidecarConfig
 }
 
@@ -123,12 +127,41 @@ type SidecarConfig struct {
 	HTTPClient *http.Client
 }
 
-// ConfigFromEnvironment fills only missing sidecar settings from the process
+// ConfigFromEnvironment fills only missing Gemini/sidecar settings from the process
 // environment. Callers that provide Config fields explicitly retain those
 // values, which keeps tests and embedded use independent of ambient config.
 // It intentionally does not choose a provider; provider selection belongs to
 // the caller because the safe default remains the deterministic fake embedder.
 func ConfigFromEnvironment(cfg Config) Config {
+	if cfg.Provider == ProviderGemini {
+		// Hosted Gemini CLI/MCP callers retain unchanged input vectors across
+		// processes. Companion supplies its own explicit shared cache path.
+		if cfg.CacheDir == "" {
+			cfg.CacheDir = os.Getenv("CORNIFER_EMBEDDING_CACHE_DIR")
+			if cfg.CacheDir == "" {
+				cfg.CacheDir = filepath.Join(".cornifer-cache", "embeddings")
+			}
+		}
+		if cfg.Gemini.APIKey == "" {
+			cfg.Gemini.APIKey = os.Getenv("CORNIFER_EMBEDDING_API_KEY")
+			if cfg.Gemini.APIKey == "" {
+				cfg.Gemini.APIKey = os.Getenv(GeminiAPIKeyEnvVar)
+			}
+		}
+		if cfg.Gemini.Model == "" {
+			cfg.Gemini.Model = os.Getenv("CORNIFER_EMBEDDING_MODEL")
+		}
+		if cfg.Gemini.BaseURL == "" {
+			cfg.Gemini.BaseURL = os.Getenv("CORNIFER_EMBEDDING_BASE_URL")
+		}
+		if cfg.Gemini.Concurrency == 0 {
+			cfg.Gemini.Concurrency, _ = strconv.Atoi(os.Getenv("CORNIFER_GEMINI_CONCURRENCY"))
+		}
+		if cfg.Gemini.RequestsPerMinute == 0 {
+			cfg.Gemini.RequestsPerMinute, _ = strconv.Atoi(os.Getenv("CORNIFER_GEMINI_REQUESTS_PER_MINUTE"))
+		}
+		return cfg
+	}
 	if cfg.Provider != ProviderSidecar {
 		return cfg
 	}

@@ -46,3 +46,28 @@ func TestConfigFromEnvironmentDoesNotOverrideExplicitOrOtherProvider(t *testing.
 		t.Errorf("non-sidecar config unexpectedly received sidecar settings: %+v", fake.Sidecar)
 	}
 }
+
+func TestGeminiConfigEnvironmentExplicitFieldsWin(t *testing.T) {
+	t.Setenv("CORNIFER_EMBEDDING_CACHE_DIR", "")
+	t.Setenv("GEMINI_API_KEY", "gemini-env")
+	t.Setenv("CORNIFER_EMBEDDING_API_KEY", "")
+	t.Setenv("CORNIFER_EMBEDDING_MODEL", "gemini-embedding-001")
+	t.Setenv("CORNIFER_EMBEDDING_BASE_URL", "https://environment.example/v1beta")
+	t.Setenv("CORNIFER_GEMINI_CONCURRENCY", "3")
+	t.Setenv("CORNIFER_GEMINI_REQUESTS_PER_MINUTE", "20")
+	cfg := ConfigFromEnvironment(Config{Provider: ProviderGemini})
+	if cfg.CacheDir != ".cornifer-cache/embeddings" {
+		t.Fatalf("Gemini cache default = %q", cfg.CacheDir)
+	}
+	if cfg.Gemini.APIKey != "gemini-env" || cfg.Gemini.Model != "gemini-embedding-001" || cfg.Gemini.Concurrency != 3 || cfg.Gemini.RequestsPerMinute != 20 {
+		t.Fatal("Gemini environment not resolved")
+	}
+	explicit := ConfigFromEnvironment(Config{Provider: ProviderGemini, Gemini: GeminiConfig{APIKey: "explicit", Model: DefaultGeminiModel, BaseURL: DefaultGeminiBaseURL, Concurrency: 1, RequestsPerMinute: 10}})
+	if explicit.Gemini.APIKey != "explicit" || explicit.Gemini.Model != DefaultGeminiModel || explicit.Gemini.BaseURL != DefaultGeminiBaseURL || explicit.Gemini.Concurrency != 1 || explicit.Gemini.RequestsPerMinute != 10 {
+		t.Fatal("Gemini explicit fields overwritten")
+	}
+	t.Setenv("CORNIFER_EMBEDDING_CACHE_DIR", "custom-cache")
+	if ConfigFromEnvironment(Config{Provider: ProviderGemini}).CacheDir != "custom-cache" || ConfigFromEnvironment(Config{Provider: ProviderGemini, CacheDir: "explicit-cache"}).CacheDir != "explicit-cache" {
+		t.Fatal("Gemini cache directory precedence incorrect")
+	}
+}

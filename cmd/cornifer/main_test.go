@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/Hendrixx-RE/cornifer/internal/embed"
@@ -142,5 +143,31 @@ func TestVoyageMetadataRecordsBothRetrievalRoles(t *testing.T) {
 	}
 	if got, want := metadata.QueryModel, "voyage-code-3;input_type=query"; got != want {
 		t.Errorf("QueryModel = %q, want %q", got, want)
+	}
+}
+
+func TestGeminiCLIQuerySpaceAndTask(t *testing.T) {
+	t.Setenv("CORNIFER_EMBEDDING_MODEL", "gemini-embedding-2")
+	t.Setenv("CORNIFER_EMBEDDING_BASE_URL", "")
+	t.Setenv("CORNIFER_EMBEDDING_DIM", "1024")
+	identity, err := embed.GeminiIdentity(embed.GeminiConfig{}, 1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := &model.Repo{EmbeddingProvider: "gemini", EmbeddingModel: identity}
+	cfg, err := embedderConfigForRepo(repo, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Provider != embed.ProviderGemini || cfg.Gemini.InputType != "query" {
+		t.Fatal("CLI Gemini code query role lost")
+	}
+	metadata := embeddingMetadataForRepo(embed.ProviderGemini, embed.ProviderGemini, identity, queryModelIdentity(cfg))
+	if !metadata.SemanticallyMeaningful || !strings.Contains(metadata.QueryModel, "input_type=query") {
+		t.Fatal("Gemini eval provenance incorrect")
+	}
+	t.Setenv("CORNIFER_EMBEDDING_MODEL", "gemini-embedding-001")
+	if _, err := embedderConfigForRepo(repo, ""); err == nil {
+		t.Fatal("CLI silently queried with a different model")
 	}
 }

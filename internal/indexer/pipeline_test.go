@@ -41,3 +41,25 @@ func TestVoyageProvenanceRecordsDocumentPrompt(t *testing.T) {
 		t.Errorf("model = %q, want %q", got, want)
 	}
 }
+
+func TestGeminiDocumentProvenanceAndExplicitProviderEnvironment(t *testing.T) {
+	t.Setenv("CORNIFER_EMBEDDING_PROVIDER", "gemini")
+	t.Setenv("CORNIFER_EMBEDDING_MODEL", "gemini-embedding-2")
+	t.Setenv("CORNIFER_EMBEDDING_BASE_URL", "")
+	t.Setenv("CORNIFER_EMBEDDING_DIM", "1024")
+	cfg := resolvedEmbedConfig(embed.Config{})
+	provider, identity := embeddingProvenance(cfg)
+	want, err := embed.GeminiIdentity(cfg.Gemini, 1024)
+	if err != nil || provider != "gemini" || identity != want {
+		t.Fatalf("Gemini provenance mismatch %s: %v", identity, err)
+	}
+	query := cfg
+	query.Gemini.InputType = "query"
+	if err := embed.ValidateQuerySpace(provider, identity, query); err != nil {
+		t.Fatal(err)
+	}
+	cfg.Gemini.Model = "unknown-model"
+	if err := requireEmbeddingConfig(cfg); err == nil {
+		t.Fatal("invalid Gemini model admitted to indexing provenance")
+	}
+}

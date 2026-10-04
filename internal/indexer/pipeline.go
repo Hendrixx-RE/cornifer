@@ -45,7 +45,7 @@ func Index(ctx context.Context, st store.Store, cfg Config) (*Stats, error) {
 	}
 
 	embedCfg := resolvedEmbedConfig(cfg.Embedder)
-	if err := requireSidecarModel(embedCfg); err != nil {
+	if err := requireEmbeddingConfig(embedCfg); err != nil {
 		return nil, err
 	}
 	provider, embeddingModel := embeddingProvenance(embedCfg)
@@ -351,7 +351,9 @@ func BuildEmbedder(cfg embed.Config) (embed.Embedder, error) {
 
 func resolvedEmbedConfig(cfg embed.Config) embed.Config {
 	if cfg.Provider == "" {
-		if os.Getenv(embed.VoyageAPIKeyEnvVar) != "" {
+		if selected := os.Getenv("CORNIFER_EMBEDDING_PROVIDER"); selected != "" {
+			cfg.Provider = embed.Provider(selected)
+		} else if os.Getenv(embed.VoyageAPIKeyEnvVar) != "" {
 			cfg.Provider = embed.ProviderVoyage
 		} else {
 			cfg.Provider = embed.ProviderFake
@@ -371,8 +373,19 @@ func requireSidecarModel(cfg embed.Config) error {
 	return nil
 }
 
+func requireEmbeddingConfig(cfg embed.Config) error {
+	if cfg.Provider == embed.ProviderGemini {
+		_, err := embed.GeminiIdentity(cfg.Gemini, cfg.Dimension)
+		return err
+	}
+	return requireSidecarModel(cfg)
+}
+
 func embeddingProvenance(cfg embed.Config) (provider, model string) {
 	switch cfg.Provider {
+	case embed.ProviderGemini:
+		identity, _ := embed.GeminiIdentity(cfg.Gemini, cfg.Dimension)
+		return string(cfg.Provider), identity
 	case embed.ProviderVoyage:
 		return string(cfg.Provider), firstNonEmpty(cfg.Voyage.Model, embed.DefaultVoyageModel) + ";input_type=document"
 	case embed.ProviderSidecar:

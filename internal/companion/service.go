@@ -183,6 +183,10 @@ func (s *Service) BuildContext(ctx context.Context, repoID, question, sessionID 
 		opts.ContextBytes = DefaultContextBytes
 	}
 	key := contextKey(repo, question, opts)
+	if identity, ok := s.context.(interface{ CacheIdentity() string }); ok {
+		sum := sha256.Sum256([]byte(key + "\x00" + identity.CacheIdentity()))
+		key = hex.EncodeToString(sum[:])
+	}
 	if pack, ok, err := s.store.GetContextCache(ctx, key, s.now()); err != nil {
 		return ContextPack{}, Session{}, err
 	} else if ok {
@@ -268,6 +272,6 @@ func (s *Service) ClearSession(ctx context.Context, id string) error {
 	return s.store.ClearSession(ctx, id)
 }
 func contextKey(r Repository, q string, o ContextOptions) string {
-	h := sha256.Sum256([]byte(strings.Join([]string{"context-symbols-v3", r.ID, r.ResolvedCommitSHA, r.IndexVersion, r.ProviderFingerprint, strings.TrimSpace(q), fmt.Sprint(o.EvidenceLimit), fmt.Sprint(o.ContextBytes), fmt.Sprint(o.GraphDepth)}, "\x00")))
+	h := sha256.Sum256([]byte(strings.Join([]string{"context-symbols-v4", r.ID, r.ResolvedCommitSHA, r.IndexVersion, r.ProviderFingerprint, strings.TrimSpace(q), fmt.Sprint(o.EvidenceLimit), fmt.Sprint(o.ContextBytes), fmt.Sprint(o.GraphDepth)}, "\x00")))
 	return hex.EncodeToString(h[:])
 }

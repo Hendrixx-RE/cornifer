@@ -15,7 +15,7 @@ Use the checkout containing the redesigned UI. The worker's local branch is
 ## Start the database and website
 
 For a new local database, these settings prepare 1024-dimensional storage for
-the supported Voyage embedding adapter. If reusing an existing indexed
+the native Gemini embedding adapter (Voyage also remains optional). If reusing an existing indexed
 database, keep its original embedding dimension instead; rerunning migrations
 does not resize existing vectors.
 
@@ -56,11 +56,12 @@ inference. Configure these variables in the server's terminal and restart it
 only when you want to use that hosted service:
 
 ```sh
-export CORNIFER_EMBEDDING_PROVIDER=voyage
-export CORNIFER_EMBEDDING_MODEL=voyage-code-3
+export CORNIFER_EMBEDDING_PROVIDER=gemini
+export CORNIFER_EMBEDDING_MODEL=gemini-embedding-2
+unset CORNIFER_EMBEDDING_API_KEY CORNIFER_EMBEDDING_BASE_URL
 # Type the key at the silent prompt, then press Enter (bash or zsh):
-read -r -s CORNIFER_EMBEDDING_API_KEY
-export CORNIFER_EMBEDDING_API_KEY
+read -r -s GEMINI_API_KEY
+export GEMINI_API_KEY
 # CORNIFER_EMBEDDING_DIM must match the database: 1024 for the new setup above.
 go run ./cmd/cornifer-serve
 ```
@@ -70,8 +71,11 @@ server restart, open the snapshot from Settings, and choose **Retry indexing**.
 You can also resubmit the same URL and original ref. This explicitly
 creates a new job for the existing pinned snapshot; there is no automatic resume.
 
-Adding a repository then calls the embedding provider and may incur its
-usage charges. Keep keys in the server environment, never in browser code or
+Gemini Embedding 2 supports this existing 1024-d storage. Its online free tier
+has quotas; a billed project can incur charges. AI Pro credits require separate
+activation/billing eligibility, not unlimited API access. Voyage is optional.
+Adding Python source or asking uncached hybrid questions calls the configured
+provider. See the user guide for official references, quotas and cached inputs. Keep keys in the server environment, never in browser code or
 committed files. Add a public `https://github.com/owner/repository` URL in the
 website, optionally set the ref in Settings, and wait for indexing to finish.
 The simple sequence is URL → indexing → question → answer or cited evidence;

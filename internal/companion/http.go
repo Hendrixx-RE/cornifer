@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+
+	"github.com/Hendrixx-RE/cornifer/internal/embed"
 )
 
 // HTTPHandler is intentionally small: the browser and MCP call the same
@@ -17,7 +19,8 @@ func HTTPHandler(service *Service, runtime RuntimeConfig, explorers ...Explorer)
 		explorer = explorers[0]
 	}
 	mux.HandleFunc("GET /api/health", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "embedding_configured": runtime.configuredEmbedding(), "embedding_provider": runtime.EmbeddingProvider, "chat_configured": chatConfigured()})
+		dim, _ := embed.ResolveDimension(runtime.EmbeddingDimension)
+		writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "embedding_configured": runtime.configuredEmbedding(), "embedding_provider": runtime.EmbeddingProvider, "embedding_model": runtime.EffectiveEmbeddingModel(), "embedding_dimension": dim, "chat_configured": chatConfigured()})
 	})
 	mux.HandleFunc("GET /api/repos", func(w http.ResponseWriter, r *http.Request) {
 		repos, err := service.ListRepositories(r.Context())

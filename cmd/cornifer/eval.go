@@ -70,7 +70,7 @@ func newEvalCmd() *cobra.Command {
 				Sparse:                sparse,
 				Vector:                sess.VectorSearcher(),
 				Embedder:              embedder,
-				Embedding:             embeddingMetadataForRepo(provider, indexProvider, sess.Repo.EmbeddingModel, embedCfg.Sidecar.Model),
+				Embedding:             embeddingMetadataForRepo(provider, indexProvider, sess.Repo.EmbeddingModel, queryModelIdentity(embedCfg)),
 				GraphBoost:            sess.GraphBoost(graphBoostWeight),
 				GraphBoostDescription: fmt.Sprintf("repo-scoped one-hop graph adjacency and same-file boost; weight=%.6f", graphBoostWeight),
 			})
@@ -118,10 +118,21 @@ func resolvedEmbedProvider(provider embed.Provider) embed.Provider {
 	if provider != "" {
 		return provider
 	}
+	if selected := os.Getenv("CORNIFER_EMBEDDING_PROVIDER"); selected != "" {
+		return embed.Provider(selected)
+	}
 	if os.Getenv(embed.VoyageAPIKeyEnvVar) != "" {
 		return embed.ProviderVoyage
 	}
 	return embed.ProviderFake
+}
+
+func queryModelIdentity(cfg embed.Config) string {
+	if cfg.Provider == embed.ProviderGemini {
+		identity, _ := embed.GeminiIdentity(cfg.Gemini, cfg.Dimension)
+		return identity + ";input_type=query"
+	}
+	return cfg.Sidecar.Model
 }
 
 func embeddingMetadata(provider, indexedProvider embed.Provider) cornefval.EmbeddingMetadata {
@@ -139,6 +150,8 @@ func embeddingMetadataForRepo(provider, indexedProvider embed.Provider, indexedM
 		indexedSource = "assumed equal to query provider; index manifest does not record it"
 	}
 	switch provider {
+	case embed.ProviderGemini:
+		return cornefval.EmbeddingMetadata{QueryProvider: string(provider), QueryModel: queryModel, IndexedProvider: string(indexedProvider), IndexedModel: indexedModel, IndexProviderSource: indexedSource, SemanticallyMeaningful: providerDeclared && indexedProvider == provider && strings.TrimSuffix(queryModel, ";input_type=query") == indexedModel}
 	case embed.ProviderVoyage:
 		if indexedModel == "" || indexedModel == "unknown" {
 			indexedModel = embed.DefaultVoyageModel + ";input_type=document"

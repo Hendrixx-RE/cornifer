@@ -42,7 +42,7 @@
     $('#loading-mark').hidden=!active;status('#phase',phaseText[phase]||phase,['failed','awaiting_credentials'].includes(phase));$('#index-name').textContent=`${name(repo)}${repo.resolved_commit_sha?' · '+repo.resolved_commit_sha.slice(0,10):''}`;
     $('#cancel-job').hidden=!job?.cancellable;$('#cancel-job').disabled=!!job?.cancel_requested;$('#cancel-job').textContent=job?.cancel_requested?'Cancellation requested':'Cancel indexing';
     $('#retry-job').hidden=!['failed','cancelled','awaiting_credentials'].includes(phase);
-    const explanations={awaiting_credentials:'Configure Voyage embeddings in the server environment, restart, then choose Retry indexing. The resolved commit stays pinned. No automatic resume.',failed:repo.safe_message||job?.safe_message||'Check the public URL, ref, database and provider configuration, then retry.',cancelled:'This job stopped. Retry starts a new indexing attempt.',stale:'Choose another ready snapshot or submit a new repository.'};
+    const explanations={awaiting_credentials:'Configure Gemini embeddings (provider gemini, GEMINI_API_KEY) or optional Voyage in the server environment. Restart, then Retry indexing. The commit stays pinned; no automatic resume.',failed:repo.safe_message||job?.safe_message||'Check the public URL, ref, database and provider configuration, then retry.',cancelled:'This job stopped. Retry starts a new indexing attempt.',stale:'Choose another ready snapshot or submit a new repository.'};
     $('#index-detail').textContent=explanations[phase]||(job?.files_seen?`${job.files_seen} files discovered${job.chunks?' · '+job.chunks+' chunks':''}${job.edges?' · '+job.edges+' resolved relations':''}`:'Progress reflects the running job.');
   }
   async function poll(jobID,epoch) {
@@ -61,7 +61,7 @@
     await loadSession();$('#question').focus();
   }
   async function refreshHealth() {
-    try{state.health=await api('/api/health');status('#provider-state',`Embeddings: ${state.health.embedding_configured?'configured ('+state.health.embedding_provider+')':'credentials required'} · Chat: ${state.health.chat_configured?'configured':'not configured'}.`);}
+    try{state.health=await api('/api/health');status('#provider-state',`Embeddings: ${state.health.embedding_configured?'configured ('+state.health.embedding_provider+' · '+state.health.embedding_model+' · '+state.health.embedding_dimension+'d)':'credentials required · Gemini or optional Voyage'} · Chat: ${state.health.chat_configured?'configured':'not configured'}.`);}
     catch(error){state.health=null;status('#provider-state','Companion unavailable: '+error.message,true);status('#entry-status','Local companion unavailable. Check the server, then refresh.',true);}
   }
   async function refreshRepos() {

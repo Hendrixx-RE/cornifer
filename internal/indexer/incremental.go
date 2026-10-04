@@ -50,7 +50,7 @@ func IncrementalIndex(ctx context.Context, st store.Store, cfg Config) (*Stats, 
 	stats.RepoID, stats.Root, stats.CommitSHA = repo.ID, root, commitSHA
 
 	embedCfg := resolvedEmbedConfig(cfg.Embedder)
-	if err := requireSidecarModel(embedCfg); err != nil {
+	if err := requireEmbeddingConfig(embedCfg); err != nil {
 		return nil, err
 	}
 	provider, embeddingModel := embeddingProvenance(embedCfg)

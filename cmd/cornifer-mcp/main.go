@@ -109,6 +109,14 @@ func storeDeps(ctx context.Context) (mcp.Deps, func(), error) {
 	var emb embed.Embedder
 	provider := embed.Provider(repo.EmbeddingProvider)
 	switch provider {
+	case embed.ProviderGemini:
+		cfg := embed.ConfigFromEnvironment(embed.Config{Provider: provider})
+		cfg.Gemini.InputType = "query"
+		if cfg.Gemini.APIKey == "" {
+			log.Printf("vector search disabled: Gemini credentials absent; set GEMINI_API_KEY or CORNIFER_EMBEDDING_API_KEY")
+		} else if err = embed.ValidateQuerySpace(repo.EmbeddingProvider, repo.EmbeddingModel, cfg); err == nil {
+			emb, err = embed.New(cfg)
+		}
 	case embed.ProviderFake:
 		emb, err = embed.New(embed.Config{Provider: provider})
 	case embed.ProviderVoyage:

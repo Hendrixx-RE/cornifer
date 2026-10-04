@@ -8,6 +8,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/Hendrixx-RE/cornifer/internal/embed"
 	"github.com/Hendrixx-RE/cornifer/internal/indexer"
 	"github.com/Hendrixx-RE/cornifer/internal/model"
 	"github.com/Hendrixx-RE/cornifer/internal/retrieve"
@@ -21,6 +22,15 @@ import (
 type EngineContextBuilder struct {
 	Engine corestore.Store
 	Config RuntimeConfig
+}
+
+// Configuration changes must not reuse a pack retrieved under a different
+// query vector space or dense/lexical availability.
+func (b EngineContextBuilder) CacheIdentity() string {
+	if !b.Config.configuredEmbedding() {
+		return "bm25-only"
+	}
+	return b.Config.ProviderFingerprint()
 }
 
 func (b EngineContextBuilder) Build(ctx context.Context, repo Repository, question string, opts ContextOptions) (ContextPack, error) {
@@ -55,6 +65,9 @@ func (b EngineContextBuilder) Build(ctx context.Context, repo Repository, questi
 	if b.Config.configuredEmbedding() {
 		embedCfg, err := b.Config.embedConfig(true, b.Config.DataDir+"/embeddings")
 		if err != nil {
+			return ContextPack{}, err
+		}
+		if err := embed.ValidateQuerySpace(session.Repo.EmbeddingProvider, session.Repo.EmbeddingModel, embedCfg); err != nil {
 			return ContextPack{}, err
 		}
 		embedder, err := indexer.BuildEmbedder(embedCfg)

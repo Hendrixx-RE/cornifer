@@ -6,8 +6,9 @@ result. Settings, MCP, saved snapshots, and explicit session memory are in the
 secondary **Settings** menu.
 
 This guide describes the unpublished `ao/cornifer-19/root` checkout including
-the sequential UI, credential retry, generic lexical indexing, and shared
-symbol-context corrections. Updated 4 October 2026. The product is not fully
+the sequential UI, credential retry, generic lexical indexing, shared
+symbol-context corrections and native Gemini embeddings. Updated 4 October
+2026. The product is not fully
 provider-validated or production deployed; see the completion status below.
 
 ## 1. Use the current checkout
@@ -101,45 +102,121 @@ can retrieve BM25 evidence without credentials. New companion URL ingestion
 still requires hosted embedding configuration, including text-only repositories;
 it never substitutes fake vectors or local inference.
 
-### Voyage embeddings
+### Gemini embeddings (recommended setup here)
 
-Configure before URL submission when you intend to index with this hosted
-service. Python indexing and configured hybrid queries can incur provider costs.
+Use your Google AI Studio Gemini API key. A Voyage account/key is optional.
+Keep the existing database at **1024 dimensions**; no schema resize or data
+replacement is needed. Select the provider/model explicitly:
 
 ```sh
-export CORNIFER_EMBEDDING_PROVIDER=voyage
-export CORNIFER_EMBEDDING_MODEL=voyage-code-3
+export CORNIFER_EMBEDDING_PROVIDER=gemini
+export CORNIFER_EMBEDDING_MODEL=gemini-embedding-2
 export CORNIFER_EMBEDDING_DIM=1024
+unset CORNIFER_EMBEDDING_BASE_URL
+unset CORNIFER_EMBEDDING_API_KEY
 ```
 
-Read the key without entering its value in shell history. Bash:
+The last two lines clear an older endpoint/key override. If you intentionally
+use `CORNIFER_EMBEDDING_API_KEY`, set that key instead; it takes priority over
+`GEMINI_API_KEY`. Do not paste keys in chat, browser fields or command arguments.
+Read the key without putting its value in shell history. Bash:
 
 ```bash
-read -r -s -p 'Voyage API key: ' CORNIFER_EMBEDDING_API_KEY
+read -r -s -p 'Gemini API key: ' GEMINI_API_KEY
 printf '\n'
-export CORNIFER_EMBEDDING_API_KEY
+export GEMINI_API_KEY
 ```
 
 Zsh (this machine's shell):
 
 ```zsh
-read -r -s 'CORNIFER_EMBEDDING_API_KEY?Voyage API key: '
+read -r -s 'GEMINI_API_KEY?Gemini API key: '
 printf '\n'
-export CORNIFER_EMBEDDING_API_KEY
+export GEMINI_API_KEY
 ```
 
-`VOYAGE_API_KEY` is the fallback when `CORNIFER_EMBEDDING_API_KEY` is empty.
-Voyage is the companion's supported embedding provider. Model default is
-`voyage-code-3`; endpoint default is
-`https://api.voyageai.com/v1/embeddings`. Optional
-`CORNIFER_EMBEDDING_BASE_URL` overrides the full endpoint. The engine CLI has
-other provider options, but they do not enable local inference in the website.
+Then stop the existing service, run `go run ./cmd/cornifer-serve` in this
+configured terminal, reload, and use **Settings → Open snapshot → Retry
+indexing** for a snapshot waiting for credentials. Its resolved commit remains
+pinned. Setting a key never automatically resumes a saved job.
 
-Stop/restart the service in this configured terminal and reload the page.
-Changing another terminal's environment cannot update the running process.
-Keep keys out of browser inputs, files you commit, screenshots, command
-arguments, and printed environment dumps. Hidden input avoids literal keys in
-history; keys still live in the process environment.
+Keys remain in the server environment; a different terminal's environment
+cannot update the running process. Hidden input avoids literal keys in history.
+Health flags indicate configuration presence, not validated credentials or
+available quota. Starting the server does not call Gemini; indexing Python
+chunks or uncached hybrid questions can do so after configuration.
+
+**Dimensions and request semantics.** Google documents model2 dimensions
+**128–3072**, which includes 1024. Its reduced outputs are automatically
+normalized. Cornifer explicitly sends 1024 for this database, validates every
+response's size and finite/nonzero values, and keeps separate model spaces.
+Each source chunk goes in one native online `embedContent` request with one
+text part, so Embedding 2 cannot accidentally aggregate a group of chunks into
+one vector. Document input is `title: none | text: <source with context header>`;
+code queries use `task: code retrieval | query: <question>`, without `taskType`.
+No Files API, asynchronous paid batch mode or model fallback is used.
+[Model dimensions](https://ai.google.dev/gemini-api/docs/models/gemini-embedding-2),
+[embedding/task formats](https://ai.google.dev/gemini-api/docs/embeddings),
+[native REST configuration](https://ai.google.dev/api/embeddings).
+
+Defaults are **2 workers** and **30 requests/minute per embedder instance**.
+Optional `CORNIFER_GEMINI_CONCURRENCY` (1–8) and
+`CORNIFER_GEMINI_REQUESTS_PER_MINUTE` (1–600) change these limits; actual project
+quotas and concurrent clients may be lower/higher than one instance's pacing.
+Transient transport/429/5xx retries are bounded (5 retries by default), with
+cancellable exponential backoff and `Retry-After`. A server delay above the
+30-second retry window stops the request rather than retrying early. Exhausted
+quota needs a later explicit indexing retry. Authentication/400/402 errors are
+not retried. Provider bodies, keys and raw transport errors are not echoed.
+
+A conservative **7680-byte** guard includes model2's formatted input, before
+any request in that call. It reserves room under the documented 8192-token
+limit without pretending to have Google's tokenizer. Oversized or invalid
+UTF-8 input is rejected with an actionable message; no silent provider
+truncation. Reduce the chunk/query size if this occurs.
+
+**Explicit older model option:** choose `gemini-embedding-001` only intentionally.
+It uses `RETRIEVAL_DOCUMENT` (title `none`) for source and
+`CODE_RETRIEVAL_QUERY` for questions. Cornifer normalizes its vectors locally
+(mathematical scaling, not local inference). Its documented input limit is
+2048 tokens; Cornifer uses a conservative 1536-byte guard. Same output range
+128–3072 permits 1024, but its vector space differs from model2. Never change
+model selection while querying a snapshot indexed with the other model.
+[001 limits](https://ai.google.dev/gemini-api/docs/models/gemini-embedding-001).
+
+`CORNIFER_EMBEDDING_BASE_URL`, if intentionally overridden for Gemini, is the
+API root (default `https://generativelanguage.googleapis.com/v1beta`), not a
+full model endpoint. Production roots require HTTPS with no query/userinfo;
+HTTP is allowed only on loopback for offline tests. Requests put the key in
+`x-goog-api-key`, never the URL, and do not follow redirects.
+
+The companion's embedding cache stays under its data directory. Engine CLI
+and engine MCP Gemini clients default to `.cornifer-cache/embeddings`; optional
+`CORNIFER_EMBEDDING_CACHE_DIR` selects their cache directory. Cache keys hash
+source/context input plus provider/model, dimension, task-format/normalization,
+endpoint, title and document/query role. Matching cached inputs survive new
+clients/reindexes without provider calls; query and document entries are
+separate. Cached context also separates dense configuration from BM25-only
+retrieval, so changing provider/model cannot bypass space checks using old packs.
+
+### Optional Voyage embeddings
+
+Voyage remains available if you deliberately choose it:
+
+```sh
+export CORNIFER_EMBEDDING_PROVIDER=voyage
+export CORNIFER_EMBEDDING_MODEL=voyage-code-3
+export CORNIFER_EMBEDDING_DIM=1024
+unset CORNIFER_EMBEDDING_BASE_URL
+```
+
+Read/export `CORNIFER_EMBEDDING_API_KEY` with the hidden-input pattern above,
+or use `VOYAGE_API_KEY` as the fallback. Its endpoint default is
+`https://api.voyageai.com/v1/embeddings`; unlike Gemini, a Voyage base override
+is the full embeddings endpoint. Restart/reload after changes. Voyage and
+Gemini vectors cannot be mixed merely because both have length 1024. For an
+existing incompatible snapshot, configure its matching provider/model or
+disable embedding configuration to retrieve BM25 evidence.
 
 ### Optional hosted chat
 
@@ -154,6 +231,23 @@ using the same hidden-input pattern. Restart/reload. `openai` is also accepted.
 The URL must be the full chat completions endpoint; the adapter does not append
 paths. It must support OpenAI-compatible messages and JSON object responses.
 
+For explicitly selected **Gemini hosted chat**, Google documents its
+OpenAI-compatible API root. Cornifer needs the full endpoint:
+
+```sh
+export CORNIFER_CHAT_PROVIDER=openai_compatible
+export CORNIFER_CHAT_BASE_URL='https://generativelanguage.googleapis.com/v1beta/openai/chat/completions'
+export CORNIFER_CHAT_MODEL='your-chosen-supported-Gemini-chat-model'
+export CORNIFER_CHAT_API_KEY="$GEMINI_API_KEY"
+```
+
+The model is a placeholder: choose a chat model available to your project.
+Cornifer never chooses or falls back to a chat model automatically. Copying the
+key into the separate chat setting is explicit; an embedding key alone does
+not enable generation. This adapter requests JSON object output; live Gemini
+chat/model compatibility remains unverified here. No chat call was made during
+implementation. [Official compatibility/structured-output guide](https://ai.google.dev/gemini-api/docs/openai).
+
 Without chat, the result is clearly labelled **Cited source evidence**. With
 chat, a valid response is labelled **Grounded answer**. Source identifiers are
 validated, but citation validity does not prove the truth of every generated
@@ -165,7 +259,7 @@ To start without hosted configuration, stop the service, then:
 
 ```sh
 unset CORNIFER_EMBEDDING_PROVIDER CORNIFER_EMBEDDING_MODEL CORNIFER_EMBEDDING_API_KEY
-unset CORNIFER_EMBEDDING_BASE_URL VOYAGE_API_KEY
+unset CORNIFER_EMBEDDING_BASE_URL GEMINI_API_KEY VOYAGE_API_KEY
 unset CORNIFER_CHAT_PROVIDER CORNIFER_CHAT_BASE_URL CORNIFER_CHAT_MODEL CORNIFER_CHAT_API_KEY
 go run ./cmd/cornifer-serve
 ```
@@ -207,7 +301,7 @@ request, not a guarantee of rolling back all partial writes. Counters reflect
 real boundaries and may remain unchanged during a long stage. Changing repo
 leaves background work running; cancel it first if you want it stopped.
 
-For `awaiting_credentials`: configure Voyage in the server environment,
+For `awaiting_credentials`: configure Gemini (or optional Voyage) in the server environment,
 restart/reload, open that snapshot in Settings, then **Retry indexing**. This
 explicitly resubmits the same original URL/ref, creates a new job on the same
 waiting snapshot, and retains its resolved SHA. Credentials alone never resume
@@ -238,7 +332,7 @@ Results begin with the question and either a grounded hosted answer or an
 explicit retrieval-only explanation. Without generated chat, source excerpts
 are expanded so you can read the actual evidence immediately. No matches is
 an honest empty state; try terms present in the code. When embeddings are
-absent, existing indexes use BM25. Configured hybrid queries may contact Voyage
+absent, existing indexes use BM25. Configured hybrid queries may contact the selected hosted provider
 for a query embedding, even in text-only repositories.
 
 Below the answer:
@@ -384,7 +478,7 @@ the companion registry/session-memory interface.
 | Companion directory | Local shallow checkouts, BM25 indexes and embedding cache. |
 | Browser localStorage | Last application session ID per repository; no provider keys. |
 | GitHub | Public URL/ref fetches before readiness or credential waiting. |
-| Voyage when configured | Python indexing chunks and uncached query questions plus model/request metadata. Generic indexing chunks remain local/lexical. |
+| Gemini or Voyage when configured | Python indexing chunks and uncached query questions plus model/request metadata. Generic indexing chunks remain local/lexical. |
 | Hosted chat when configured | Shared bounded context: question, repository URL/SHA, cited snippets, paths/lines/hashes, symbol signatures and immediate relationships/confidence. Saved notes are not automatically included. |
 
 Charges depend on your provider/account/model. No paid calls or local inference
@@ -393,6 +487,47 @@ snapshots and memory. There is no repository-delete/storage-quota UI, automatic
 clone eviction, or scheduled expiry purge. Back up both Postgres and the
 companion directory. Removing source/cache files alone breaks usable snapshots
 while registry status may still say ready.
+
+### Cost, AI Pro and storage choices
+
+Google currently lists **Gemini Embedding 2 online text** as free on its free
+tier, subject to project quotas/availability, and **$0.20 per million input
+text tokens** on the paid tier. Cornifer uses online requests only, with no
+Files/batch paid fallback; it cannot determine or cap your project's billing
+plan from an API key. [Official pricing](https://ai.google.dev/gemini-api/docs/pricing).
+
+An AI Pro subscription does not imply unlimited free Gemini API access.
+Google says eligible AI Pro users get **$10/month Cloud credits after benefit
+activation**, usable towards Gemini API. The API project's tier/billing plan
+still controls service. Prepay accounts need a positive purchased/prepay
+balance before eligible promotional credits apply; check your own account
+status. No billing, activation or subscription action was performed here.
+[AI Pro developer benefits](https://blog.google/innovation-and-ai/technology/developers-tools/gdp-premium-ai-pro-ultra/),
+[Gemini API billing/credits](https://ai.google.dev/gemini-api/docs/billing/).
+
+**Cornifer recommendation:** keep its own AST-aware source chunks, lexical
+BM25, static graph and Postgres/pgvector. Use hosted embeddings as a replaceable
+vector bridge. This preserves exact path/line/SHA evidence and provider-neutral
+MCP context. Google File Search manages ingestion/chunking and retrieval through
+its generation tool; replacing the engine with it would change these contracts,
+not simply reduce vector storage. This is a design recommendation, not a measured
+retrieval-quality win. [File Search architecture](https://ai.google.dev/gemini-api/docs/file-search).
+
+Preserve the current **1024-d database**. Google recommends **768** as one compact
+embedding dimension: consider it for a **new, separate database**, comparing
+Cornifer's existing query set (precision/recall/MRR, citation quality and latency)
+before deciding. 768 uses 25% fewer raw float values than 1024; source text,
+metadata and ANN index overhead mean disk usage need not fall by 25%.
+[Model recommendations](https://ai.google.dev/gemini-api/docs/models/gemini-embedding-2),
+[pgvector storage](https://github.com/pgvector/pgvector).
+
+Current savings: unchanged matching embedding inputs hit the shared cache;
+model, dimensions, task format, endpoint and input hash stay isolated. Generic
+text chunks remain lexical-only. Empirical next step: measure chunk/table/index
+bytes and cache reuse on representative snapshots, then compare 768 versus
+1024 in isolated stores with the same model/task/input. Deduplication of raw
+source across snapshots, storage quotas, cache eviction and vector compression
+are not implemented. Do not migrate/rebuild the user's store for this study.
 
 ## 9. Stop, restart and troubleshoot
 
@@ -410,7 +545,7 @@ project without deleting its volume. For the named existing container,
 Do not use `down -v` for data you want to keep.
 
 UI assets are embedded: stop and rebuild/restart Go after edits, then reload.
-The simplified UI uses asset version `sequential-3`. Refreshing an old binary
+The Gemini setup update uses asset version `gemini-1`. Refreshing an old binary
 cannot install new assets.
 
 | Problem | Action |
@@ -439,6 +574,17 @@ and flat fills are preserved throughout; no gradients are used.
 - **Built:** sequential UI; honest URL/job/retry/cancel states; answer-first cited
   results with progressive source/symbol/dependency details; focused shared
   context graph; discreet saved snapshots/MCP/session controls.
+- **Gemini verified offline:** native mocked HTTP tests cover individual chunk
+  requests, 1024-d model2 task prefixes and explicit model001 roles/normalization,
+  shape/finite/cardinality guards, authentication redaction/redirect safety,
+  concurrency/rate/retry/cancellation and cache identity. An isolated Postgres
+  test verifies persisted native protocol vectors, pinned credentials retry,
+  website/MCP context parity and model/provider/context-cache isolation.
+- **Current Gemini UI verified:** the rebuilt sole localhost7788 app shows
+  Gemini-first setup and accurate pinned retry instructions. AO Browser opened
+  a saved waiting snapshot and returned to entry using keyboard controls;
+  no new runtime errors appeared. Served assets match this checkout. The user
+  snapshot registry is unchanged across restart and storage remains vector(1024).
 - **Backend verified offline:** generic docs/source retrieval and incremental
   changes/cache/backfill; real Python edges; shared HTTP/MCP pack parity including
   signatures, relation IDs/confidence; snapshot/session isolation; actual phase
@@ -459,8 +605,8 @@ and flat fills are preserved throughout; no gradients are used.
   but painted mobile viewport and pointer-drag checks remain unverified. Native
   AO navigation needs a fresh snapshot after the preview finishes rebinding;
   stale selectors are not evidence of an application error.
-- **User corpus provider-blocked:** the current Cornifer submission awaits Voyage
-  credentials. No full hosted URL→embedding→ready run, live hybrid provider
+- **User corpus provider-blocked:** the current Cornifer submission awaits embedding
+  credentials (Gemini or optional Voyage). No real Gemini (or Voyage) request, full hosted URL→embedding→ready run, live hybrid provider
   query, or hosted chat E2E has been executed. Controlled adapter responses and
   offline fixture evidence are distinct from hosted validation.
 - **Remaining implementation limits:** interrupted-job recovery, same-SHA repeated
