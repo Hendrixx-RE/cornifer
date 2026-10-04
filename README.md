@@ -1,5 +1,7 @@
 # Cornifer
 
+<img src="cmd/cornifer-serve/web/brand/cornifer.png" alt="Cornifer logo" width="96">
+
 Repository intelligence engine: parses a real codebase into a **structural
 index** (AST → symbols → import/call graph) and a **semantic index**
 (AST-aware chunks → embeddings + BM25), answers queries by combining exact

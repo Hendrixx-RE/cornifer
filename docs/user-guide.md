@@ -1,5 +1,7 @@
 # Cornifer user guide
 
+<img src="../cmd/cornifer-serve/web/brand/cornifer.png" alt="Cornifer logo" width="64">
+
 Cornifer now has a simple sequence: **repository URL → indexing → question →
 answer or cited evidence**. Source and dependency details expand below the
 result. Settings, MCP, saved snapshots, and explicit session memory are in the
@@ -266,7 +268,7 @@ go run ./cmd/cornifer-serve
 
 ## 4. Repository URL → indexing
 
-The entry screen has a Cornifer wordmark and one **Public GitHub repository
+The entry screen has the Cornifer logo and wordmark and one **Public GitHub repository
 URL** input. Enter `https://github.com/owner/repository`, then press Enter or
 the submit arrow. Use a public repository root URL; `.git` is accepted.
 HTTP, credentials, query strings, fragments, and file/tree URLs are rejected.
@@ -545,7 +547,7 @@ project without deleting its volume. For the named existing container,
 Do not use `down -v` for data you want to keep.
 
 UI assets are embedded: stop and rebuild/restart Go after edits, then reload.
-The Gemini setup update uses asset version `gemini-1`. Refreshing an old binary
+The logo update uses asset version `brand-1`. Refreshing an old binary
 cannot install new assets.
 
 | Problem | Action |
@@ -567,7 +569,9 @@ All actions are keyboard reachable, with visible focus. Enter submits URL/questi
 Shift+Enter adds a question newline; Escape closes Settings. Small-screen content
 stacks in the same sequence. System/browser Reduce motion disables loading and
 transition animation. Monkeytype Gruvbox Dark tokens, self-hosted Roboto Mono,
-and flat fills are preserved throughout; no gradients are used.
+and flat UI fills are preserved; CSS and graph assets use no gradients. The
+user-selected Cornifer PNG is the unchanged canonical logo, shared by entry,
+loading/status and question branding, browser icons and these guides.
 
 ## Completion and verification status
 

@@ -1,5 +1,7 @@
 # Run the Cornifer website locally
 
+<img src="../cmd/cornifer-serve/web/brand/cornifer.png" alt="Cornifer logo" width="64">
+
 Run the commands below from the repository root containing `go.mod`. The
 website is served by Go; it needs no npm install or separate frontend server.
 Use the checkout containing the redesigned UI. The worker's local branch is
