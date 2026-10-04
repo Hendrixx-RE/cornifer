@@ -42,8 +42,8 @@ curl http://127.0.0.1:7788/api/health
 ```
 
 These startup commands do not configure or call a model provider. A new
-database starts with an empty repository list; the verification fixture in
-the worker preview is separate and is not automatically installed. Existing
+database starts with an empty repository list; worker verification fixtures
+use a separate isolated database and are never installed in the user database. Existing
 ready companion snapshots in the same database can be explored and searched
 with lexical retrieval when hosted credentials are absent. Their checkouts
 and local index cache must still be available at their recorded paths.
@@ -58,27 +58,33 @@ only when you want to use that hosted service:
 ```sh
 export CORNIFER_EMBEDDING_PROVIDER=voyage
 export CORNIFER_EMBEDDING_MODEL=voyage-code-3
-export CORNIFER_EMBEDDING_API_KEY='your-key'
+# Type the key at the silent prompt, then press Enter (bash or zsh):
+read -r -s CORNIFER_EMBEDDING_API_KEY
+export CORNIFER_EMBEDDING_API_KEY
 # CORNIFER_EMBEDDING_DIM must match the database: 1024 for the new setup above.
 go run ./cmd/cornifer-serve
 ```
 
 For a snapshot already in `awaiting_credentials`, reload the page after the
-server restart and submit the same URL and original ref again. This explicitly
+server restart, open the snapshot from Settings, and choose **Retry indexing**.
+You can also resubmit the same URL and original ref. This explicitly
 creates a new job for the existing pinned snapshot; there is no automatic resume.
 
 Adding a repository then calls the embedding provider and may incur its
 usage charges. Keep keys in the server environment, never in browser code or
 committed files. Add a public `https://github.com/owner/repository` URL in the
-website, optionally select a branch/tag/commit, and wait for indexing to finish.
+website, optionally set the ref in Settings, and wait for indexing to finish.
+The simple sequence is URL → indexing → question → answer or cited evidence;
+function/source/dependency details expand below results, while MCP and session
+memory controls stay in Settings.
 Python has structural graph coverage. Other recognized docs/source extensions
 receive bounded generic text chunks for BM25 retrieval and cited source
 inspection, without structural symbols, edges, or embedding vectors. The
 companion URL intake still requires hosted embedding configuration even for a
 text-only repository; it does not switch to fake or local inference.
 
-Hosted chat is configured independently and is optional. Without it, the Ask
-panel returns cited source evidence instead of generated answers. For chat
+Hosted chat is configured independently and is optional. Without it, questions
+return cited source evidence instead of generated answers. For chat
 configuration, see the [README companion setup](../README.md#local-companion-website--mcp).
 
 ## Restart, stop, and troubleshooting
@@ -94,8 +100,8 @@ configuration, see the [README companion setup](../README.md#local-companion-web
 - For a port conflict, select another loopback port in
   `CORNIFER_COMPANION_ADDR`. The database's host port is configured separately
   in `docker-compose.yml`.
-- Enable your system/browser **Reduce motion** preference to disable interface
-  animations and animated graph zoom.
+- Enable your system/browser **Reduce motion** preference to disable loading
+  and transition animations. Graph pan/zoom changes are immediate.
 
 For controls, MCP/session examples, retry limits, and verified completion status,
 see the [Cornifer user guide](user-guide.md).

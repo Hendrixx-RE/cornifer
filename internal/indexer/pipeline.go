@@ -70,6 +70,7 @@ func Index(ctx context.Context, st store.Store, cfg Config) (*Stats, error) {
 		return nil, fmt.Errorf("indexer: walk: %w", err)
 	}
 	stats.Files = len(walked)
+	cfg.progress("parse", stats)
 	cfg.log("walked %d indexable file(s)", len(walked))
 
 	files := make([]*model.File, len(walked))
@@ -138,6 +139,9 @@ func Index(ctx context.Context, st store.Store, cfg Config) (*Stats, error) {
 			continue
 		}
 		inputs = append(inputs, resolve.FileInput{File: files[i], Symbols: perFile[i], Result: results[i]})
+	}
+	if len(inputs) > 0 {
+		cfg.progress("graph", stats)
 	}
 	resolved, err := resolve.Resolve(inputs)
 	doneResolve()
@@ -222,6 +226,7 @@ func Index(ctx context.Context, st store.Store, cfg Config) (*Stats, error) {
 	}
 
 	if len(texts) > 0 {
+		cfg.progress("embed", stats)
 		embedder, err := BuildEmbedder(embedCfg)
 		if err != nil {
 			return nil, fmt.Errorf("indexer: build embedder: %w", err)
@@ -243,6 +248,7 @@ func Index(ctx context.Context, st store.Store, cfg Config) (*Stats, error) {
 	doneEmbed()
 
 	// Store chunks
+	cfg.progress("store", stats)
 
 	doneStoreChunks := stats.track("store chunks")
 	if err := st.InsertChunks(ctx, allChunks); err != nil {

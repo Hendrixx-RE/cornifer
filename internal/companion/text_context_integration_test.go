@@ -11,8 +11,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
+	"time"
+
+	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/Hendrixx-RE/cornifer/internal/embed"
 	"github.com/Hendrixx-RE/cornifer/internal/indexer"
@@ -78,9 +82,18 @@ func TestPostgresGenericCompanionContext(t *testing.T) {
 			}
 			t.Cleanup(product.Close)
 			cfg := indexer.Config{RepoRoot: root, CacheDir: cache, IncludeText: true, Embedder: embed.Config{Provider: embed.ProviderFake}}
+			var phases []string
+			cfg.Progress = func(progress indexer.Progress) { phases = append(phases, progress.Phase) }
 			stats, err := indexer.Index(ctx, engine, cfg)
 			if err != nil {
 				t.Fatal(err)
+			}
+			wantPhases := []string{"parse", "store"}
+			if mixed {
+				wantPhases = []string{"parse", "graph", "embed", "store"}
+			}
+			if !reflect.DeepEqual(phases, wantPhases) {
+				t.Fatalf("actual pipeline phases=%v want %v", phases, wantPhases)
 			}
 			t.Cleanup(func() { _, _ = product.pool.Exec(ctx, "DELETE FROM repos WHERE id=$1", stats.RepoID) })
 			repo, _, err := product.UpsertRepository(ctx, Repository{CanonicalURL: "https://github.com/cornifer-offline-test/" + newID() + ".git", Status: StatusReady})
@@ -221,8 +234,106 @@ func TestPostgresGenericCompanionContext(t *testing.T) {
 			if err != nil || len(finalGraph.Nodes) != len(graph.Nodes) || len(finalGraph.Edges) != len(graph.Edges) {
 				t.Fatalf("generic reindex altered Python graph: %+v err=%v", finalGraph, err)
 			}
+			if mixed {
+				verifySequentialParity(t, service, product, engine, repo)
+			}
 		})
 	}
+}
+
+func verifySequentialParity(t *testing.T, service *Service, product *PostgresStore, engine corestore.Store, repo Repository) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	query := "target"
+	request := httptest.NewRequest(http.MethodPost, "/api/context", strings.NewReader(fmt.Sprintf(`{"repository_id":%q,"question":%q}`, repo.ID, query)))
+	response := httptest.NewRecorder()
+	HTTPHandler(service, RuntimeConfig{}, Explorer{Engine: engine}).ServeHTTP(response, request)
+	var browser struct {
+		Context ContextPack `json:"context"`
+		Session Session     `json:"session"`
+	}
+	if response.Code != 200 || json.Unmarshal(response.Body.Bytes(), &browser) != nil {
+		t.Fatalf("HTTP context failed: %s", response.Body)
+	}
+	ct, st := sdk.NewInMemoryTransports()
+	server, err := NewMCPServer(service).Connect(ctx, st, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close()
+	client, err := sdk.NewClient(&sdk.Implementation{Name: "offline-parity-test", Version: "1"}, nil).Connect(ctx, ct, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	result, err := client.CallTool(ctx, &sdk.CallToolParams{Name: "get_context", Arguments: map[string]any{"repository_id": repo.ID, "question": query, "session_id": browser.Session.ID}})
+	if err != nil || result.IsError {
+		t.Fatalf("MCP get_context=%+v, %v", result, err)
+	}
+	data, err := json.Marshal(result.StructuredContent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var mcp struct {
+		Context ContextPack `json:"context"`
+		Session Session     `json:"session"`
+	}
+	if json.Unmarshal(data, &mcp) != nil || !reflect.DeepEqual(browser.Context, mcp.Context) || mcp.Session.ID != browser.Session.ID {
+		t.Fatalf("website/MCP evidence differs: HTTP=%+v MCP=%s", browser.Context, data)
+	}
+	pack := mcp.Context
+	if len(pack.Symbols) != 2 || len(pack.Relationships) != 1 || pack.Repository.CommitSHA != repo.ResolvedCommitSHA {
+		t.Fatalf("focused symbol/dependency context=%+v", pack)
+	}
+	byID := map[string]ContextSymbol{}
+	for _, symbol := range pack.Symbols {
+		if symbol.Path != "app.py" || symbol.StartLine < 1 || symbol.EndLine < symbol.StartLine || !strings.HasPrefix(symbol.Signature, "def ") {
+			t.Fatalf("symbol metadata incomplete: %+v", symbol)
+		}
+		byID[symbol.ID] = symbol
+	}
+	edge := pack.Relationships[0]
+	if byID[edge.FromSymbolID].Name != "caller" || byID[edge.ToSymbolID].Name != "target" || edge.Kind != "calls" || edge.Confidence <= 0 || edge.Depth != 1 {
+		t.Fatalf("dependency/caller direction wrong: %+v", edge)
+	}
+	// Another snapshot with the same function name must carry its own source
+	// and signature, and reject the original snapshot's application session.
+	root, cache := t.TempDir(), t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "app.py"), []byte("def target(other_snapshot):\n    return other_snapshot\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{{"init"}, {"add", "."}, {"commit", "-m", "isolated offline snapshot"}} {
+		command := exec.Command("git", append([]string{"-C", root, "-c", "core.hooksPath=/dev/null", "-c", "user.name=Offline fixture", "-c", "user.email=fixture@example.invalid"}, args...)...)
+		if out, err := command.CombinedOutput(); err != nil {
+			t.Fatalf("fixture git: %s: %v", out, err)
+		}
+	}
+	stats, err := indexer.Index(ctx, engine, indexer.Config{RepoRoot: root, CacheDir: cache, IncludeText: true, Embedder: embed.Config{Provider: embed.ProviderFake}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _, _ = product.pool.Exec(context.Background(), "DELETE FROM repos WHERE id=$1", stats.RepoID) })
+	foreign, _, err := product.UpsertRepository(ctx, Repository{CanonicalURL: repo.CanonicalURL, RequestedRef: "offline-other", Status: StatusReady})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = product.pool.Exec(context.Background(), "DELETE FROM companion_repositories WHERE id=$1", foreign.ID)
+	})
+	foreign.CheckoutPath, foreign.CacheDir, foreign.ResolvedCommitSHA, foreign.EngineRepoID = root, cache, stats.CommitSHA, stats.RepoID
+	if err := product.UpdateRepository(ctx, foreign); err != nil {
+		t.Fatal(err)
+	}
+	wrong, err := client.CallTool(ctx, &sdk.CallToolParams{Name: "get_context", Arguments: map[string]any{"repository_id": foreign.ID, "question": query, "session_id": browser.Session.ID}})
+	if err != nil || !wrong.IsError {
+		t.Fatalf("cross-snapshot session accepted: %+v err=%v", wrong, err)
+	}
+	other, _, err := service.BuildContext(ctx, foreign.ID, query, "", ContextOptions{})
+	if err != nil || other.Repository.CommitSHA == pack.Repository.CommitSHA || len(other.Symbols) != 1 || !strings.Contains(other.Symbols[0].Signature, "other_snapshot") || len(other.Relationships) != 0 {
+		t.Fatalf("cross-snapshot symbol contamination: %+v err=%v", other, err)
+	}
+	t.Logf("HTTP/MCP parity: %d symbols, %d indexed call edge; session and symbol metadata isolated by snapshot", len(pack.Symbols), len(pack.Relationships))
 }
 
 func chunkIDs(chunks []*model.Chunk) string {

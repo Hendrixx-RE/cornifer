@@ -268,6 +268,6 @@ func (s *Service) ClearSession(ctx context.Context, id string) error {
 	return s.store.ClearSession(ctx, id)
 }
 func contextKey(r Repository, q string, o ContextOptions) string {
-	h := sha256.Sum256([]byte(strings.Join([]string{r.ID, r.ResolvedCommitSHA, r.IndexVersion, r.ProviderFingerprint, strings.TrimSpace(q), fmt.Sprint(o.EvidenceLimit), fmt.Sprint(o.ContextBytes), fmt.Sprint(o.GraphDepth)}, "\x00")))
+	h := sha256.Sum256([]byte(strings.Join([]string{"context-symbols-v3", r.ID, r.ResolvedCommitSHA, r.IndexVersion, r.ProviderFingerprint, strings.TrimSpace(q), fmt.Sprint(o.EvidenceLimit), fmt.Sprint(o.ContextBytes), fmt.Sprint(o.GraphDepth)}, "\x00")))
 	return hex.EncodeToString(h[:])
 }

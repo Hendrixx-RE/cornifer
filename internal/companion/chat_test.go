@@ -35,3 +35,14 @@ func TestGenerateAnswerAcceptsEvidenceCitation(t *testing.T) {
 		t.Fatalf("GenerateAnswer=%+v, %v", got, err)
 	}
 }
+
+func TestGenerateAnswerEmptyEvidenceNeverCallsProvider(t *testing.T) {
+	client := &http.Client{Transport: roundTrip(func(*http.Request) (*http.Response, error) {
+		t.Fatal("empty evidence contacted a provider")
+		return nil, nil
+	})}
+	answer, err := GenerateAnswer(context.Background(), ChatConfig{Provider: "openai_compatible", BaseURL: "https://test.invalid/chat", Model: "test", APIKey: "offline-test", HTTPClient: client}, ContextPack{})
+	if err != nil || answer.Status != "insufficient_evidence" {
+		t.Fatalf("empty evidence=%+v, %v", answer, err)
+	}
+}

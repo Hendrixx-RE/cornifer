@@ -145,7 +145,11 @@ func (r LocalRunner) Run(ctx context.Context, repo Repository, progress func(Pro
 		return repo, err
 	}
 	progress(Progress{Phase: string(StatusIndexing), Cancellable: true})
-	stats, err := indexer.Index(ctx, r.Engine, indexer.Config{RepoRoot: checkout, CacheDir: cacheDir, Embedder: embedCfg, IncludeText: true})
+	stats, err := indexer.Index(ctx, r.Engine, indexer.Config{RepoRoot: checkout, CacheDir: cacheDir, Embedder: embedCfg, IncludeText: true,
+		Progress: func(p indexer.Progress) {
+			progress(Progress{Phase: p.Phase, FilesSeen: p.Files, Chunks: p.Chunks, Edges: p.Edges, Cancellable: true})
+		},
+	})
 	if err != nil {
 		return repo, err
 	}

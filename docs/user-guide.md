@@ -1,14 +1,18 @@
 # Cornifer user guide
 
-This guide describes the local companion website and its companion MCP tools
-as implemented in the unpublished `ao/cornifer-19/root` checkout, based on
-commit `7ae1154` plus the credential-retry and generic lexical indexing corrections accompanying this guide. It was checked against the code and running local service on
-4 October 2026. See [completion status](#completion-status-and-known-limits)
-before treating it as a finished production product.
+Cornifer now has a simple sequence: **repository URL → indexing → question →
+answer or cited evidence**. Source and dependency details expand below the
+result. Settings, MCP, saved snapshots, and explicit session memory are in the
+secondary **Settings** menu.
 
-## 1. Use the checkout containing the new website
+This guide describes the unpublished `ao/cornifer-19/root` checkout including
+the sequential UI, credential retry, generic lexical indexing, and shared
+symbol-context corrections. Updated 4 October 2026. The product is not fully
+provider-validated or production deployed; see the completion status below.
 
-On this machine, the redesigned website is in:
+## 1. Use the current checkout
+
+On this machine:
 
 ```sh
 cd /home/hendrixx/.ao/data/worktrees/cornifer/cornifer-19
@@ -17,38 +21,23 @@ git log -1 --oneline
 ```
 
 The branch should be `ao/cornifer-19/root`. These worker commits have not been
-pushed, merged into main, or deployed. A new clone from GitHub or an older
-checkout may therefore show a different website. There is no npm setup: the
-Go server embeds and serves the HTML, CSS, JavaScript, and self-hosted font.
+pushed, merged into main, or deployed. An older checkout or a fresh GitHub clone
+may have a different website. Go embeds and serves the UI: no npm installation
+or separate frontend server is needed.
 
-You need Go 1.26 or newer, Git, and a C compiler for tree-sitter. On Ubuntu the
-compiler is supplied by `build-essential`; on macOS use Xcode Command Line
-Tools. Docker with Compose is needed for the supplied Postgres setup, and Make
-is needed for the convenience commands. An existing suitable Postgres can be
-used without Docker; it must support the pgvector extension and migrations.
+Requirements: Go 1.26 or newer, Git, and a C compiler for tree-sitter
+(`build-essential` on Ubuntu or Xcode Command Line Tools on macOS). The supplied
+database uses Docker with Compose and Make. You can instead use an existing
+Postgres with pgvector and the Cornifer migrations.
 
-## 2. Start with the existing local database
+## 2. Database and startup
 
-The user's `cornifer-postgres` container is already running on host port
-**5433**, and its database was successfully migrated through version **12**
-with embedding dimension **1024**. The latest animated website is already
-running at **http://127.0.0.1:7788**. Older Cornifer web listeners were stopped.
+The user's `cornifer-postgres` container is on host port **5433**, migrated
+through version **12**, with **1024**-dimensional embedding storage. One website
+instance runs at **http://127.0.0.1:7788**. Stop that instance before starting
+another on the same port.
 
-To check the current service, without contacting model providers:
-
-```sh
-curl --fail http://127.0.0.1:7788/api/health
-docker ps --filter name=cornifer-postgres
-```
-
-The health response currently reports `status: "ok"`,
-`embedding_configured: false`, and `chat_configured: false`. Configuration
-flags indicate that required environment values exist; they do not test a
-provider key or prove that indexing will succeed. A new database has no ready
-snapshots, so an empty repository list is expected.
-
-For a later restart, first stop the existing website process rather than
-launching a second copy on the same port. In the checkout above:
+For startup/restart from the checkout:
 
 ```sh
 export CORNIFER_DATABASE_URL='postgres://cornifer:cornifer@127.0.0.1:5433/cornifer?sslmode=disable'
@@ -61,19 +50,24 @@ go run ./cmd/migrate up
 go run ./cmd/cornifer-serve
 ```
 
-Keep the service terminal open. Visit **http://127.0.0.1:7788**. Keep the same
-database URL and data directory across restarts: ready snapshots depend on
-both database records and their recorded local checkout/cache paths.
+Keep the terminal open. From a second terminal:
 
-### Optional: create a fresh Compose database
+```sh
+curl --fail http://127.0.0.1:7788/api/health
+docker ps --filter name=cornifer-postgres
+```
 
-Use this only when you do not already have the desired database running.
-The supplied Compose file uses the fixed container name `cornifer-postgres`
-and port 5433; it cannot start a second independent database on those same
-resources. Compose volumes are also tied to the Compose project, so changing
-checkout/project can select a different volume.
+`embedding_configured` and `chat_configured` are configuration-presence flags,
+not provider key validation. Keep the database URL and companion directory
+stable: snapshots rely on both Postgres records and recorded local source/cache
+paths. A new database has no indexed snapshots. The user's existing Cornifer
+submission is currently waiting for embedding credentials; no fixture is added
+to that database by verification.
 
-After setting the environment above, run:
+### Optional fresh Compose database
+
+If the desired local database does not already exist/running, set the variables
+above, then use:
 
 ```sh
 make up
@@ -81,40 +75,36 @@ go run ./cmd/migrate up
 go run ./cmd/cornifer-serve
 ```
 
-`make up` starts `pgvector/pgvector:pg16` and waits for Postgres readiness.
-It does not index a repository or configure a provider. The supplied
-`cornifer:cornifer` database credentials are local development defaults.
+`make up` starts `pgvector/pgvector:pg16` and waits for database readiness.
+Compose uses the fixed container name `cornifer-postgres` and port 5433, so it
+cannot create a second database container on those same resources. Volumes are
+Compose-project scoped: a different project/checkout can select another volume.
+The supplied `cornifer:cornifer` credentials are local development defaults.
 
-### Embedding dimension must match storage
-
-Migration 7 creates `chunks.embedding` as `vector(N)`, using
-`CORNIFER_EMBEDDING_DIM` (default 1024 in this checkout). Subsequent `migrate up`
-runs do **not** resize the existing column. Keep the server's embedding
-dimension equal to the database column and the embedding model's output.
-Do not roll back migrations or delete a volume just to resolve a mismatch in
-a database containing work you want to keep.
-
-If using the supplied container, inspect the column without changing it:
+Migration 7 sets `chunks.embedding` to `vector(N)`, reading
+`CORNIFER_EMBEDDING_DIM` (default 1024). Later migration runs do not resize it.
+Keep the configured model output dimension and existing column equal. Inspect
+without changing it:
 
 ```sh
 docker exec -i cornifer-postgres psql -U cornifer -d cornifer -c \
   "SELECT format_type(atttypid, atttypmod) FROM pg_attribute WHERE attrelid='chunks'::regclass AND attname='embedding';"
 ```
 
-## 3. Configure hosted services only when needed
+Do not roll back migrations or delete a wanted volume to fix a dimension error.
+Use a separate correctly migrated database when necessary.
 
-Embeddings and chat are separate. Neither is required to start the website.
-Graph/source browsing makes no model calls. Previously indexed snapshots can
-use BM25 lexical retrieval without embedding credentials, provided their
-local caches and checkouts remain available. The companion does not substitute
-fake vectors or run local inference for new URL indexing.
+## 3. Configure hosted services separately
 
-### Voyage embeddings: required for new companion indexes
+Starting the website does not require or call a model provider. Ready indexes
+can retrieve BM25 evidence without credentials. New companion URL ingestion
+still requires hosted embedding configuration, including text-only repositories;
+it never substitutes fake vectors or local inference.
 
-Configure these **before submitting a URL**. Adding or searching a
-repository with hosted embeddings configured can make billable requests.
+### Voyage embeddings
 
-In the terminal that will start the service:
+Configure before URL submission when you intend to index with this hosted
+service. Python indexing and configured hybrid queries can incur provider costs.
 
 ```sh
 export CORNIFER_EMBEDDING_PROVIDER=voyage
@@ -122,7 +112,7 @@ export CORNIFER_EMBEDDING_MODEL=voyage-code-3
 export CORNIFER_EMBEDDING_DIM=1024
 ```
 
-Read the key without typing its value into shell history. For Bash:
+Read the key without entering its value in shell history. Bash:
 
 ```bash
 read -r -s -p 'Voyage API key: ' CORNIFER_EMBEDDING_API_KEY
@@ -130,7 +120,7 @@ printf '\n'
 export CORNIFER_EMBEDDING_API_KEY
 ```
 
-For Zsh (the current machine's shell):
+Zsh (this machine's shell):
 
 ```zsh
 read -r -s 'CORNIFER_EMBEDDING_API_KEY?Voyage API key: '
@@ -138,24 +128,20 @@ printf '\n'
 export CORNIFER_EMBEDDING_API_KEY
 ```
 
-The adapter also accepts `VOYAGE_API_KEY` as a fallback when
-`CORNIFER_EMBEDDING_API_KEY` is unset or empty. The default embedding endpoint
-is `https://api.voyageai.com/v1/embeddings`; the optional
-`CORNIFER_EMBEDDING_BASE_URL` overrides that complete endpoint URL. Voyage is
-the only supported companion embedding provider. Engine CLI sidecar/fake
-options do not enable those providers in the website.
+`VOYAGE_API_KEY` is the fallback when `CORNIFER_EMBEDDING_API_KEY` is empty.
+Voyage is the companion's supported embedding provider. Model default is
+`voyage-code-3`; endpoint default is
+`https://api.voyageai.com/v1/embeddings`. Optional
+`CORNIFER_EMBEDDING_BASE_URL` overrides the full endpoint. The engine CLI has
+other provider options, but they do not enable local inference in the website.
 
-Restart `go run ./cmd/cornifer-serve` after changing configuration, then reload
-the page. Environment changes in another terminal do not update a running
-server. Keep keys out of the website, committed files, command arguments,
-screenshots, and printed environment dumps. Hidden input prevents the key's
-literal value entering command history; it remains in the process environment.
+Stop/restart the service in this configured terminal and reload the page.
+Changing another terminal's environment cannot update the running process.
+Keep keys out of browser inputs, files you commit, screenshots, command
+arguments, and printed environment dumps. Hidden input avoids literal keys in
+history; keys still live in the process environment.
 
 ### Optional hosted chat
-
-Without chat configuration, **Ask Cornifer → Search** returns cited evidence;
-it does not generate an answer. With chat configured, the same Search button
-requests a hosted answer grounded in that evidence.
 
 ```sh
 export CORNIFER_CHAT_PROVIDER=openai_compatible
@@ -163,19 +149,19 @@ export CORNIFER_CHAT_BASE_URL='https://provider.example/v1/chat/completions'
 export CORNIFER_CHAT_MODEL='replace-with-your-provider-model'
 ```
 
-The URL and model above are placeholders: supply your chosen hosted provider's
-full **chat completions endpoint**, not just its API root. The adapter does not
-append `/chat/completions`. Read `CORNIFER_CHAT_API_KEY` with the same hidden
-input pattern used above, then export it and restart the server.
+The endpoint/model above are placeholders. Read/export `CORNIFER_CHAT_API_KEY`
+using the same hidden-input pattern. Restart/reload. `openai` is also accepted.
+The URL must be the full chat completions endpoint; the adapter does not append
+paths. It must support OpenAI-compatible messages and JSON object responses.
 
-The provider value `openai` is also supported. The endpoint must accept an
-OpenAI-compatible chat completions request with `response_format` set to
-`json_object`. The adapter rejects empty answers and evidence IDs not present
-in the retrieved pack. This checks citation identifiers, not the factual truth
-of every claim; inspect the linked source yourself.
+Without chat, the result is clearly labelled **Cited source evidence**. With
+chat, a valid response is labelled **Grounded answer**. Source identifiers are
+validated, but citation validity does not prove the truth of every generated
+claim. No-evidence queries return an insufficient-evidence state without
+calling the chat provider. Chat failures display an error; there is no fabricated
+answer or automatic provider fallback.
 
-To return to retrieval without hosted calls, stop the server, unset both sets
-of configuration and the Voyage fallback key, then restart:
+To start without hosted configuration, stop the service, then:
 
 ```sh
 unset CORNIFER_EMBEDDING_PROVIDER CORNIFER_EMBEDDING_MODEL CORNIFER_EMBEDDING_API_KEY
@@ -184,382 +170,309 @@ unset CORNIFER_CHAT_PROVIDER CORNIFER_CHAT_BASE_URL CORNIFER_CHAT_MODEL CORNIFER
 go run ./cmd/cornifer-serve
 ```
 
-## 4. Add a repository and follow its job
+## 4. Repository URL → indexing
 
-1. Enter `https://github.com/owner/repository` in **Add public GitHub repository**.
-   Repository URLs with `.git` are accepted; file/tree URLs, credentials, query
-   strings, and fragments are rejected. Public GitHub is the supported intake.
-2. In **Git ref, optional**, enter a branch, tag, or commit SHA. Leave it blank
-   to resolve the remote HEAD. There is no authenticated private-repository UI.
-3. Activate the **＋ / Index repository** button.
-4. Follow the repository entry's state and select it to inspect the snapshot.
+The entry screen has a Cornifer wordmark and one **Public GitHub repository
+URL** input. Enter `https://github.com/owner/repository`, then press Enter or
+the submit arrow. Use a public repository root URL; `.git` is accepted.
+HTTP, credentials, query strings, fragments, and file/tree URLs are rejected.
+Private/authenticated ingestion is not supported.
 
-The runner shallow-clones, fetches the requested ref, resolves it to a commit,
-and checks out that commit detached. It disables Git hooks, does not run the
-repository's application or build, and does not recursively check out
-submodules. The displayed SHA identifies the snapshot; subsequent remote
-changes do not update that checkout automatically.
+For a specific branch, tag, or commit, first set **Git ref for the next intake**
+in Settings. Blank resolves remote HEAD. The runner shallow-clones and fetches
+the ref, resolves a SHA, then checks out that commit detached. Git hooks and
+recursive submodule checkout are disabled; repository application/build code
+is not executed.
 
-| State | Meaning and next step |
+Loading is a subtle flat dot animation plus real job phase text. There is no
+percentage, ETA, or artificial delay.
+
+| Job phase/state | What is happening |
 | --- | --- |
-| `queued` | A background job has been created in this server process. |
-| `cloning` | Fetching the public repository. |
-| `resolving` | Fetching/resolving the ref to its pinned commit, not resolving graph edges yet. |
-| `indexing` | Parsing, chunking, storing graph/text data and creating embeddings. |
-| `ready` | Select the snapshot to explore and retrieve evidence. |
-| `awaiting_credentials` | Clone/ref resolution finished, but embedding credentials were missing. Configure/restart, then explicitly resubmit the same URL/ref to start a new job for that pinned snapshot. |
-| `failed` | Indexing failed; the UI displays a safe message. Correct the cause before a new submission. |
-| `cancelled` | Cancellation ended that job. Submit again after addressing the reason for cancellation. |
-| `stale` | A recognized status in the data contract; the current runner does not automatically set it when a remote branch moves. |
+| `queued` | Waiting for this process's worker. |
+| `cloning` | Downloading the public repository. |
+| `resolving` | Resolving the requested ref to a pinned commit. |
+| `indexing` | Preparing the index. |
+| `parse` | Indexing files and parsing Python structural source. |
+| `graph` | Resolving Python relationships; omitted when no Python inputs exist. |
+| `embed` | Creating Python source embeddings; omitted when no Python chunks need vectors. |
+| `store` | Saving chunks and lexical retrieval index. |
+| `ready` | Reveals the question screen with repository and short SHA. |
+| `awaiting_credentials` | Embedding configuration was absent after clone/ref resolution. |
+| `failed` / `cancelled` | Job stopped; an actionable message and Retry indexing appear. |
+| `stale` | Contract-supported unavailable state; remote branch movement does not automatically set it. |
 
-The page polls a submitted job about every 1.1 seconds while active.
-**Cancel indexing** appears only while the page knows a cancellable job.
-Cancellation is a request to stop work; it does not erase the registry entry
-or guarantee rollback of partial indexing. Counters are reported at pipeline
-boundaries and can remain zero during a long stage. There is no ETA.
+**Cancel indexing** appears only for a cancellable job. Cancellation is a stop
+request, not a guarantee of rolling back all partial writes. Counters reflect
+real boundaries and may remain unchanged during a long stage. Changing repo
+leaves background work running; cancel it first if you want it stopped.
 
-### Retry, reload, and restart limits
+For `awaiting_credentials`: configure Voyage in the server environment,
+restart/reload, open that snapshot in Settings, then **Retry indexing**. This
+explicitly resubmits the same original URL/ref, creates a new job on the same
+waiting snapshot, and retains its resolved SHA. Credentials alone never resume
+jobs automatically. With credentials still absent it returns to waiting.
 
-- There is no dedicated Retry or Resume button. Resubmitting the form is the
-  available intake action. **Refresh repositories** reloads registry status;
-  it does not restart a job.
-- An active request with the same canonical URL/ref is deduplicated. For an
-  `awaiting_credentials` request, the corrected procedure is: stop the server,
-  configure Voyage credentials in its terminal, restart it, reload the page,
-  enter the **same URL and same original ref** (including blank if it was blank),
-  and activate **Index repository** again. This explicitly requeues the existing
-  snapshot with a **new job ID**, retaining its already resolved commit SHA.
-  It reruns clone/index work, not a saved pipeline step. Repeated submission
-  while this retry is active selects the active job rather than starting another.
-  Credentials alone never automatically resume it. If credentials remain absent,
-  an explicit retry returns to `awaiting_credentials` again.
-- Failed/cancelled records are not deduplicated as active work. Resubmission
-  creates a new request, rather than continuing from a saved pipeline step.
-  Repeated requests resolving to an identical URL/ref/SHA also have a known
-  snapshot uniqueness/finalization risk; successful repeat indexing is not
-  guaranteed by the current implementation.
-- Jobs run in memory within the server process. Restarting the server does
-  not automatically resume persisted queued/cloning/resolving/indexing jobs
-  or reconcile interrupted states. Cancel active work and wait for a terminal
-  state before a planned restart. After a crash, a stuck record may require
-  a lifecycle fix rather than merely another refresh.
-- Reloading the browser loses its in-memory job tracking. Resubmit the same
-  active URL/ref to obtain its existing job and resume **page polling**, not
-  the indexing operation. A polling request error is displayed; the page
-  does not automatically retry that failed poll.
-- The embedding HTTP adapter has bounded retries for transient network,
-  429, and 5xx errors (up to five retries). That is separate from job retry;
-  it does not resume a job after credentials change or the server exits.
+Active same-URL/ref submissions reuse the job. Failed/cancelled retries create
+another request, not a saved-step continuation. Repeating a completed identical
+URL/ref/SHA still has a known uniqueness/finalization limitation. Interrupted
+active jobs are not recovered/reconciled at server startup. Before a planned
+restart, cancel and wait for a terminal state. Refresh/reopen checks status,
+not worker liveness. A polling error stops page polling; reopen the snapshot
+in Settings to check again. Provider HTTP retries for transient network/429/5xx
+errors are bounded and separate from these job lifecycle limits.
 
-## 5. Explore a ready snapshot
+Ready saved snapshots are available through **Use an indexed snapshot**, or
+**Settings → Choose a snapshot → Open snapshot**. This lets you return to a
+pinned version without starting another index. Other saved states can be opened
+there to inspect status/retry. There is no snapshot comparison or reindex button.
 
-Choose a repository entry in **Repositories**. The header shows its repository,
-status, short commit SHA, symbol count, and relation count. Different completed
-snapshots can be selected independently; there is no separate snapshot picker
-or comparison view.
+## 5. Question → answer and progressively expanded details
 
-### Files, symbols, graph, and source
+The ready screen has a centered question input and a small repo/SHA indicator.
+Ask natural-language code questions, then press Enter or the arrow. Shift+Enter
+adds a newline. **Change repo** returns to URL intake. Follow-up questions reuse
+the current application session ID for the same snapshot.
 
-- **Files & symbols** lists indexed file paths and structural symbols. Click a
-  file to open numbered source; click a symbol to select its graph node and
-  populate the inspector. These are read-only views of the local pinned checkout.
-- **Find file or symbol…** currently filters file paths first, then symbols
-  within matched paths. A symbol name alone may not find its file. Search by
-  part of the file path and browse its symbols, or use Ask Cornifer for text
-  retrieval. This is a current search limitation.
-- The **Graph** tab shows indexed Python nodes and real resolved edges. It draws
-  a connected slice of at most 100 nodes, focusing around a selected symbol.
-  The API itself is bounded to 2,500 nodes and 10,000 edges; large repositories
-  are not represented in full by this view.
-- Drag the graph background to pan, scroll to zoom, or use **Zoom in**,
-  **Zoom out**, and **Fit graph to view**. Fit resets the view transform; it
-  does not recalculate a bounding box for every node.
-- **Relationships** filters All types, Calls, Imports, Inherits, or Implements.
-  An available filter does not imply the index contains that edge type.
-- Select a graph node to see its kind, qualified name, signature if available,
-  source location, and incoming/outgoing relationships. Relationship buttons
-  select the related symbol; **Open source** or the location link opens its
-  source range. The inspector displays at most 60 related entries.
-- The **Source** tab and citation links open numbered excerpts, not a full editor.
-  Clicking a file starts with lines 1–80; changing to Source uses lines 1–100.
-  The source endpoint limits an individual range to at most 501 lines.
+Results begin with the question and either a grounded hosted answer or an
+explicit retrieval-only explanation. Without generated chat, source excerpts
+are expanded so you can read the actual evidence immediately. No matches is
+an honest empty state; try terms present in the code. When embeddings are
+absent, existing indexes use BM25. Configured hybrid queries may contact Voyage
+for a query embedding, even in text-only repositories.
 
-Python is the only language with structural symbol/relationship extraction.
-Common supported documentation and source extensions receive generic text
-chunks for lexical (BM25) retrieval, alongside file navigation and source
-inspection. Examples include Markdown, Go, JavaScript/TypeScript, Java, Rust,
-C/C++, Ruby, PHP, shell, JSON, YAML, and TOML. Generic chunks have no embedding
-vectors, symbols, or graph edges. They remain lexical even when hybrid
-retrieval is enabled for Python. Other language structural coverage is
-unsupported; this is not equivalent language analysis.
+Below the answer:
 
-Generic chunks are bounded to 4,096 source bytes and 128 lines, targeting 512
-estimated tokens including their bounded context header under default settings.
-They keep inclusive source line numbers and raw text. Oversized single lines
-are split on UTF-8 boundaries; their fragments share that line number, so
-opening the citation displays the original whole line. The excerpt hash refers
-to the actual fragment. Empty files have no chunks. Generic text must be valid
-UTF-8. Unsupported extensions, excluded files, external dependencies, and
-unresolved relationships are not guaranteed to appear. **About language
-coverage** and the in-place coverage note explain the structural distinction.
-An empty graph does not mean the repository has no searchable text.
+- Expand a relevant **class/function** to see its exact recorded signature,
+  source location, and counts of callers, callees, and other dependencies
+  within this context. A merged source chunk can represent multiple functions;
+  shared metadata includes its recorded owner and fully enclosed exact
+  definitions. It does not invent a unique answer symbol from query words.
+- Expand **Dependencies and relationships** for named incoming/outgoing links,
+  relation kinds and confidence. These are resolved static Python edges;
+  confidence is not runtime certainty. There are at most 32 immediate
+  relationships in the shared pack, so it is not a complete dependency inventory.
+- The graph inside that section includes only context symbols and their
+  relationships. Direct evidence symbols use the main accent. Select a node
+  or relation symbol to open source. Drag to pan, scroll/zoom controls to zoom,
+  **Reset view** to reset, or use arrow keys while the graph is focused to pan.
+- Expand **Cited source excerpts** for `[eN]`, normalized path/lines, actual
+  snippet, retrieval provenance and excerpt SHA-256. Click a citation, symbol
+  source link, or answer citation to open numbered source from the pinned
+  checkout. The full snapshot SHA appears below every result. Excerpt hashes
+  differ from the commit SHA; truncation is labelled.
+- **Ask a follow-up** returns focus to a cleared question input.
 
-Full indexing and incremental reindex both include generic files. Incremental
-reindex updates added/changed/deleted files and rebuilds BM25; unchanged content
-retains its chunk IDs and BM25 cache. It also backfills nonempty generic files
-whose old file records exist but have no chunks. Simply restarting the server
-or refreshing the browser does not rebuild an existing index. The engine CLI
-`index` and `reindex` now include supported generic formats by default; the
-website has no reindex button. Reindex needs the same checkout and cache paths,
-database, dimension, and original embedding provider/model. Python changes may
-make hosted embedding calls; generic-only updates do not embed generic text.
-Do not use fake vectors to repair a real hosted index.
+This is the **same ContextPack returned by companion MCP `get_context`**. Shared
+`symbols` include IDs, kind/name, qualified name, signature, path, lines and an
+`evidence` marker. Relationships include source/target symbol IDs, direction,
+kind and confidence. Both website and MCP use the same retrieval, bounds,
+provenance and session boundary. The UI does not run a second retrieval path or
+build a fabricated graph. Context cache versioning prevents older packs without
+symbol metadata from being reused by this UI.
 
-Pinned companion snapshots should not be edited in place. The engine's
-same-commit incremental path can index working-tree edits, but a context pack
-already cached for that question/snapshot may remain cached for ten minutes.
-This correction does not introduce automatic invalidation of saved context or
-session evidence; use a newly indexed pinned snapshot for new repository code.
-The companion URL runner still requires Voyage credentials before indexing,
-even if a repository turns out to contain only generic text.
+Defaults: eight evidence hits, 18,000 bytes of excerpt budget, ten-minute cached
+packs, up to 256 cache entries. MCP can request other evidence/context limits;
+evidence count is capped at 20. Omission/truncation metadata is preserved. The
+source API allows a range of at most 501 lines. Large/bounded context does not
+establish complete whole-repository coverage.
 
-### Ask Cornifer, context, and citations
+### Language coverage and reindex
 
-Enter a code question in **Ask Cornifer**, then select **Search** or press
-Enter. Shift+Enter inserts a newline. This works only for a ready snapshot.
+Python has AST chunks and structural symbols/relationships. Common supported
+Markdown/text and Go, JS/TS, Java, Rust, C/C++, Ruby, PHP, shell, JSON, YAML,
+TOML and other walker-supported source formats have **generic lexical chunks**,
+with no vectors or structural graph. The result explains unsupported structural
+coverage in-place. Generic chunks are limited to 4,096 bytes and 128 lines,
+targeting 512 estimated tokens under default settings. Oversized single lines
+split on UTF-8 boundaries with the same original line number. Empty files have
+no chunks; generic text must be valid UTF-8. Excluded directories/extensions and
+unresolved/external dependencies are not promised coverage.
 
-Without hosted chat, results are source excerpts with `[e1]`, `[e2]`, etc.
-With hosted chat, a generated answer appears above the evidence. With embedding
-credentials absent, an existing index uses BM25 lexical retrieval. With Voyage
-configured, uncached queries can send the question to Voyage for a query
-embedding and use hybrid retrieval with graph adjacency boosting.
+Full and incremental indexing include generic text. Added/changed/deleted files
+update stored chunks and BM25; unchanged content retains chunk IDs/cache. Engine
+reindex backfills nonempty legacy generic file records with missing chunks.
+Restarting the service alone does not rebuild an index. Use the same original
+checkout/cache/database/provider/dimension for engine reindex; Python changes
+may call a hosted provider. Do not use fake vectors to repair a hosted index.
+Pinned companion checkouts should not be edited in place: same-commit working
+tree reindex can leave a question's context cached for ten minutes and cannot
+rewrite already saved memory events. New code should get a new pinned snapshot.
 
-Each evidence card shows path, line range, symbol where available, excerpt,
-retrieval provenance, and an excerpt SHA-256 prefix. Click its citation or an
-answer's inline evidence link to open the source. A citation's excerpt hash is
-distinct from the repository commit SHA. Evidence can be truncated by the
-context budget. No matches means insufficient retrieved evidence, not proof
-that a behavior is absent from the repository.
+## 6. Settings: explicit session memory
 
-The underlying context pack also contains the repository SHA, capabilities,
-relationships, retrieval systems, and omission information. The website renders
-the evidence cards; MCP `get_context` exposes the structured pack. Defaults are
-eight evidence hits and an 18,000-byte excerpt budget; MCP can request different
-limits, with evidence count capped at 20. Context packs are cached for ten
-minutes (up to 256 cache entries). Cache reuse can avoid retrieval work; it does
-not turn hosted chat into a free or offline operation.
+The first successful question creates an application session automatically.
+Settings shows its stable ID, snapshot scope/expiry, recent searches/notes, and
+**Remember a decision → Save note**. There is no entry-screen memory panel.
 
-### Keyboard, small screens, and motion
+- IDs and events live in Postgres; the browser remembers its ID per repository
+  in origin/profile-specific localStorage. Same port/profile can reconnect
+  after reload. The UI has no manual session-ID import; MCP/API can supply one.
+- Scope is snapshot ID **and** resolved SHA. Another snapshot, a stale session,
+  or expiry rejects context reuse. A moved ref creates another snapshot and
+  keeps old notes attached to the original one.
+- Default expiry is seven days from creation, not extended by normal requests.
+  Recent events are bounded to 64; the menu displays the most recent 12.
+  Notes are capped to 2,000 bytes by the service and 2,000 characters in the UI.
+- Notes are explicitly persisted, but are **not automatically recalled into
+  answers**. There is no rolling summary generator. MCP clients may deliberately
+  read and use them.
+- **Clear session** immediately deletes that session and its events, with no
+  undo. The next question creates another. It does not remove indexes/jobs or
+  the separate context cache.
+- Expiry is enforced for reuse, but cleanup is not scheduled. Do not assume
+  expired records are deleted or global session storage is capped at 100.
 
-Tab moves through controls; Enter/Space activates focused graph symbols.
-Ctrl+K or Cmd+K focuses the catalog search; Escape leaves its focus. Enter in
-the catalog opens the first visible file/symbol result. The graph zoom controls
-are keyboard focusable. At narrower widths the workspace stacks, so scroll to
-reach the assistant and memory sections. A system/browser **Reduce motion**
-preference disables UI animations and animated graph zoom. Surfaces are flat
-Gruvbox fills with self-hosted Roboto Mono; no gradients are used.
+## 7. Settings: MCP connection
 
-## 6. Keep an explicit second-brain session
-
-The first successful context retrieval creates an application session.
-**Session memory** then shows its commit scope/expiry and enables **Save note**
-and **Clear**. Save a decision or reminder in the note field; prior search
-questions and saved notes appear in the event list. There is no separate
-Create session button.
-
-- The stable application `session_id` is stored in Postgres. The browser stores
-  its last ID per repository in localStorage, so it can reconnect after refresh
-  in the same browser profile. A different origin/port/profile has a different
-  localStorage store. The UI has no field to paste a session ID; MCP/API clients
-  can explicitly supply one.
-- Sessions are scoped to **repository snapshot ID and resolved commit SHA**.
-  Reusing an ID with another snapshot, a stale session, or an expired session
-  fails context retrieval. A newly indexed moving branch gets its own snapshot;
-  old memory remains attached to the old one, rather than automatically becoming
-  stale or being transferred.
-- Default expiry is seven days from creation; routine searches/notes do not
-  extend it. Only the most recent 64 events are retained per session. Notes are
-  limited to 2,000 bytes by the service (the UI also has a 2,000-character limit).
-- Notes and retrieved context events persist across service restarts. There is
-  no automatic rolling summary generation or automatic injection of saved notes
-  into search/chat. An MCP client can read the events and deliberately use them
-  in its own workflow.
-- **Clear** immediately deletes that session and its events; there is no undo
-  or confirmation dialog. The next search creates another session. Clearing
-  memory does not remove indexed source, embeddings, repository jobs, or the
-  separate context cache.
-- Expiry is enforced when reusing a session for context. A cleanup function
-  exists, but this server does not schedule it: do not assume expired sessions
-  are automatically deleted or that total storage is capped at 100 sessions.
-
-## 7. Connect an MCP client
-
-The website server exposes Streamable HTTP MCP at:
+Streamable HTTP endpoint:
 
 ```text
 http://127.0.0.1:7788/mcp
 ```
 
-The top **MCP** button and the **MCP connection** endpoint button copy this URL.
-They do **not** copy a full client configuration or API keys. If clipboard
-access is unavailable, copy the displayed URL manually. There is no MCP client
-connection test/pairing button; the page's connected status refers to the
-local HTTP companion.
-
-Configure your client's Streamable HTTP connection with that URL. For clients
-using the common `mcpServers` URL configuration, a representative entry is:
+Settings has **Copy endpoint** and **Copy config**. Config copies a representative
+`mcpServers` entry with a URL, not credentials:
 
 ```json
-{
-  "mcpServers": {
-    "cornifer-companion": {
-      "url": "http://127.0.0.1:7788/mcp"
-    }
-  }
-}
+{"mcpServers":{"cornifer-companion":{"url":"http://127.0.0.1:7788/mcp"}}}
 ```
 
-Client configuration formats vary; some need an explicit HTTP transport type.
-The running server owns provider credentials. A client running in another
-container or computer cannot use its own `127.0.0.1` to reach this host server.
-Keep the current local binding; remote access/authentication is not implemented
-as a production deployment flow.
+Client formats differ; some need an explicit HTTP transport setting. On clipboard
+failure the menu displays text to copy manually. The server owns provider keys.
+There is no client pairing/connection-test feature. A client's own container or
+remote computer's `127.0.0.1` is not this host; authenticated remote operation
+is not implemented as a production flow.
 
-### Exact companion tools and arguments
+Server identity: `cornifer-companion`, version `0.2.0`. Use companion repository
+IDs, not numeric engine IDs. Exact tools:
 
-The server identifies itself as `cornifer-companion`, version `0.2.0`.
-Use returned repository IDs, not the engine's numeric `engine_repo_id`.
-Fields marked optional can be omitted.
-
-| Tool | JSON arguments | Result/use |
+| Tool | Arguments | Result |
 | --- | --- | --- |
-| `list_repositories` | `{}` | Local snapshot records and safe status. |
-| `get_index_status` | `{"repository_id":"<snapshot-id>"}` | Repository snapshot/status; it does not return the separate Job object. |
-| `ingest_repository` | `{"url":"https://github.com/owner/repository","ref":"<branch-tag-or-SHA>"}` (`ref` optional) | `repository`, `job`, `reused`; starts/deduplicates intake under the same lifecycle limits as the UI. |
-| `get_context` | `{"repository_id":"<snapshot-id>","question":"Where is routing handled?","session_id":"<session-id>","evidence_limit":8,"context_bytes":18000}` (last three optional) | `context` plus `session`; omit `session_id` to create a session, then retain returned `session.id`. |
-| `remember_context` | `{"session_id":"<session-id>","note":"Check routing before changing dispatch."}` | Updated session and a persisted explicit note. |
-| `get_session_context` | `{"session_id":"<session-id>","limit":16}` (`limit` optional) | `session` and recent `events`; default/max 64. |
-| `clear_context` | `{"session_id":"<session-id>"}` | Deletes that session/events and returns `{"cleared":true}`. |
+| `list_repositories` | `{}` | Snapshot records/status. |
+| `get_index_status` | `{"repository_id":"<snapshot-id>"}` | Repository status; not the separate Job object. |
+| `ingest_repository` | `{"url":"https://github.com/owner/repo","ref":"<ref>"}` (`ref` optional) | Repository, job, reused; same retry/lifecycle contract as UI. |
+| `get_context` | `{"repository_id":"<snapshot-id>","question":"Where is routing handled?","session_id":"<id>","evidence_limit":8,"context_bytes":18000}` (last three optional) | Shared context plus session; retain `session.id` for follow-ups. |
+| `remember_context` | `{"session_id":"<id>","note":"Check routing before changes."}` | Persisted explicit note and updated session. |
+| `get_session_context` | `{"session_id":"<id>","limit":16}` (`limit` optional, default/max 64) | Session and recent events. |
+| `clear_context` | `{"session_id":"<id>"}` | Deletes session/events, returns `cleared: true`. |
 
-For a typical second-brain workflow: list repositories, choose a ready snapshot,
-call `get_context` without a session ID, retain `session.id`, remember a note,
-and supply the same `session_id` on later context calls for that snapshot.
-Call `get_session_context` to inspect memory, and `clear_context` when done.
+The application ID is not the MCP transport session ID. Reconnection does not
+select your memory. `get_context` creates/records local events despite its MCP
+read-only annotation. Companion MCP has no chat-generation/cancel/source-read
+or graph-navigation tool; the context pack already contains the bounded
+structural graph metadata. Website source/cancel operations use the HTTP API.
 
-An MCP transport/session identifier is **not** this application session ID.
-Transport reconnection does not select your memory. Companion MCP has no
-`generate_answer`, graph-navigation, source-read, or cancel-job tool; cited
-context comes from `get_context`, and those other operations are website/API
-features. The MCP read-only annotation on `get_context` does not prevent it
-from recording a local session/event.
-
-### Companion stdio is a separate launch option
-
-For a client supporting only stdio, run the same registry/context/session tools
-with the same environment and database using:
+For stdio-only clients, configure the same environment/working directory and
+let the client launch:
 
 ```sh
 go run ./cmd/cornifer-companion-mcp
 ```
 
-Normally the MCP client launches this command with its working directory set
-to the checkout and its environment configured. Stdout carries protocol
-messages; logs go to stderr. It does not start the website. Avoid submitting
-duplicate jobs from separate server processes: job execution/cancellation
-is process-local.
+This serves the same companion tools, without a website; stdout is protocol,
+stderr is logs. Avoid duplicate indexing from separate processes because jobs
+and cancellation are process-local. `go run ./cmd/cornifer-mcp` is the older
+engine MCP with different tools (`search_code`, `find_definition`, etc.), not
+the companion registry/session-memory interface.
 
-`go run ./cmd/cornifer-mcp` is the **older engine MCP** with different tools,
-such as `search_code` and `find_definition`, and engine repository configuration.
-It is not a replacement for companion session-memory tools. No local inference
-setup is required or performed by the workflows in this guide.
+## 8. Data and cost
 
-## 8. Storage, provider data, and operating costs
-
-| Location or service | What it stores/receives |
+| Destination | Data |
 | --- | --- |
-| Local Postgres | Repository/job metadata, files, symbols, edges, source chunks, embedding vectors, context cache, sessions and event payloads. |
-| `CORNIFER_COMPANION_DIR` | Shallow repository checkouts under `repos/`, BM25 caches under `cache/`, and embedding cache under `embeddings/`. Recorded snapshot paths must stay available. |
-| Browser localStorage | The last application session ID per repository for that origin/profile, not API keys. |
-| GitHub | Repository/ref fetch requests; public code is downloaded to this machine. |
-| Voyage when configured | Indexing source chunks and uncached search questions for embeddings, plus model/output-dimension/request metadata. Generic docs/source-text chunks stay local and lexical; they are not sent for indexing embeddings. A configured hybrid search may still send its question for a query embedding. |
-| Hosted chat when configured | The bounded context pack: query, repository URL/SHA/capabilities, evidence excerpts/path/lines/hashes, retrieval metadata and relationships. Saved session notes are not automatically included. |
+| Local Postgres | Registry/jobs, files/symbols/edges, source chunks, Python vectors, context cache and session events. |
+| Companion directory | Local shallow checkouts, BM25 indexes and embedding cache. |
+| Browser localStorage | Last application session ID per repository; no provider keys. |
+| GitHub | Public URL/ref fetches before readiness or credential waiting. |
+| Voyage when configured | Python indexing chunks and uncached query questions plus model/request metadata. Generic indexing chunks remain local/lexical. |
+| Hosted chat when configured | Shared bounded context: question, repository URL/SHA, cited snippets, paths/lines/hashes, symbol signatures and immediate relationships/confidence. Saved notes are not automatically included. |
 
-Repository size, chunk count, repeated snapshots, embeddings, source caches,
-and session evidence all consume disk. There is no website repository-delete
-control, storage quota UI, automatic clone eviction, or scheduled expiry purge.
-The Compose volume persists after `make down`; back up both the database and
-the companion directory if you need durable usable snapshots. Deleting local
-files alone can break source/retrieval while leaving the registry `ready`.
+Charges depend on your provider/account/model. No paid calls or local inference
+were used for worker verification. Local disk grows with sources, embeddings,
+snapshots and memory. There is no repository-delete/storage-quota UI, automatic
+clone eviction, or scheduled expiry purge. Back up both Postgres and the
+companion directory. Removing source/cache files alone breaks usable snapshots
+while registry status may still say ready.
 
-No paid provider request has been made during this worker's verification.
-Provider charges depend on your account/model and usage; this guide does not
-quote prices or promise free requests. Starting without provider configuration
-does not call a model provider, but submitting a repository still contacts
-GitHub and downloads its checkout before reaching `awaiting_credentials`.
+## 9. Stop, restart and troubleshoot
 
-## 9. Stop, restart, and troubleshoot
-
-For a website you launched in a terminal, press **Ctrl+C**. For the current
-worker-started instance, use its owning session/process, rather than starting
-another copy. If you need to identify a port owner on Linux:
+Press Ctrl+C in a service terminal. For the current worker-started service,
+identify its owner on Linux before stopping it:
 
 ```sh
 ss -ltnp 'sport = :7788'
 ```
 
-Stop the identified Cornifer process with `kill -INT <pid>` only after checking
-that it is the intended server. Keep Postgres running during website restarts.
-To stop a database managed by this checkout's Compose project, use `make down`;
-for the existing named container, `docker stop cornifer-postgres` and later
-`docker start cornifer-postgres` preserve its volume. Do not use `down -v` to
-stop a database whose data you want to retain.
+Use `kill -INT <pid>` only for the identified intended Cornifer process.
+Keep Postgres running for website restarts. `make down` stops the owning Compose
+project without deleting its volume. For the named existing container,
+`docker stop cornifer-postgres` / `docker start cornifer-postgres` preserve data.
+Do not use `down -v` for data you want to keep.
 
-Go embeds the UI at build time. After changing UI files, stop and rerun
-`go run ./cmd/cornifer-serve` to build the current bundle, then reload the page.
-The guide/retry bundle uses asset version `workspace-9`. Merely refreshing
-an older binary does not install new UI code.
+UI assets are embedded: stop and rebuild/restart Go after edits, then reload.
+The simplified UI uses asset version `sequential-3`. Refreshing an old binary
+cannot install new assets.
 
-| Problem | Check/action |
+| Problem | Action |
 | --- | --- |
-| `bind: address already in use` | The app is already running or another process owns 7788. Open the existing app or stop the verified old process. If intentionally changing port, set `CORNIFER_COMPANION_ADDR='127.0.0.1:7794'`; UI MCP copy uses the active port. |
-| Database connection refused | Check `docker ps`, container readiness, and the same `CORNIFER_DATABASE_URL` in your server terminal; the host port is 5433, not container port 5432. |
-| Missing tables | Run `go run ./cmd/migrate status` and `go run ./cmd/migrate up` from the checkout with the server's database URL. |
-| Vector dimension mismatch | Inspect the existing vector column, use matching configuration, and choose a separate correctly migrated database if necessary; rerunning migrations cannot resize it. |
-| Empty repositories | A fresh database has none. The worker's FastAPI verification fixture is not installed in the user's database. Index only after configuring credentials. |
-| `awaiting_credentials` persists | Configure embeddings, restart/reload, then explicitly submit the same URL and original ref. Restart/configure alone does not create a retry job. |
-| Failed URL/ref | Use a public repository root URL and a ref accepted by GitHub. Safe messages intentionally omit raw command/provider output. |
-| Stuck active job after restart | No automatic job recovery/reconciliation exists. Refresh checks status, not worker liveness. |
-| Graph absent | Confirm `ready`, Python structural coverage, available indexed symbols, and intact checkout/cache paths. Other languages have no graph nodes but supported nonempty text files have lexical chunks. Old indexes need reindexing to backfill missing chunks. |
-| Symbol search misses a name | The catalog currently filters file paths before symbols. Use the filename/path and browse, or retrieve code text through Ask. |
-| No evidence | Try terms present in the code. Missing embedding credentials uses lexical retrieval for existing indexes; an empty result is not a generated answer. |
-| Hosted chat error | Check all four chat env values and full endpoint/model compatibility, restart, and reload. When configured chat fails the UI displays the error; it does not automatically fall back to the retrieval-only endpoint. |
-| Source/cache unavailable | Restore the recorded companion checkout/BM25 cache paths and database together. Changing the base directory does not migrate existing records. |
-| Memory disappeared | Check same origin/browser profile, snapshot ID/SHA, seven-day expiry, or prior Clear. MCP can inspect a known application session ID. |
-| Clipboard unavailable | Copy the displayed MCP endpoint manually. |
-| Old UI remains | Restart the server from this worker checkout, verify the intended port and current assets, then reload/cache-bust the page. |
+| Port already used | Open the existing app or stop the verified old process; alternatively deliberately set a different loopback `CORNIFER_COMPANION_ADDR`. |
+| Database refused/missing tables | Check container/readiness/host5433, same DSN, and `migrate status`/`migrate up`. |
+| Dimension mismatch | Inspect column and match settings; rerunning migrations does not resize it. |
+| URL rejected | Use public HTTPS GitHub owner/repo root without query/auth/tree path. |
+| Waiting for credentials | Configure, restart/reload, reopen snapshot in Settings, Retry indexing. |
+| Stuck active job after crash | No automatic startup recovery; reopening shows persisted state, not worker liveness. |
+| Hosted answer error | Check all chat variables and complete compatible endpoint/model; restart/reload. No fabricated fallback answer. |
+| No evidence/graph | Query actual terms; check ready source/cache and language coverage. Non-Python evidence has no structural graph. |
+| Source unavailable | Restore recorded checkout/cache alongside database; changing the base directory does not migrate old paths. |
+| Memory absent | Check same browser origin/profile, snapshot ID/SHA, expiry or prior Clear. Use MCP for a known ID. |
+| Clipboard denied | Copy the displayed endpoint/config text manually. |
+| Old page | Restart correct checkout/binary on intended port, then reload/cache-bust. |
 
-## Completion status and known limits
+All actions are keyboard reachable, with visible focus. Enter submits URL/question;
+Shift+Enter adds a question newline; Escape closes Settings. Small-screen content
+stacks in the same sequence. System/browser Reduce motion disables loading and
+transition animation. Monkeytype Gruvbox Dark tokens, self-hosted Roboto Mono,
+and flat fills are preserved throughout; no gradients are used.
 
-The redesign and local documentation are implemented. The product is **not
-fully complete or production validated**.
+## Completion and verification status
 
-| Status | Evidence and practical limit |
-| --- | --- |
-| **Built** | Animated flat Gruvbox/Roboto Mono workspace; public URL intake/jobs/cancel/status; indexed graph/source explorer; cited retrieval/optional chat adapter; persistent explicit memory; companion HTTP/stdio MCP. |
-| **Verified locally** | Earlier project Go tests and vet passed. The focused retry was checked against a separate temporary Postgres database using a controlled runner, with a Git stub checking pinned-SHA fetch; no hosted requests were involved. Changed explorer/source behavior has tests. UI syntax, build, motion interpolation/cancellation/reduced-motion behavior, and absence of gradients/old visual assets were checked. |
-| **Verified on a real indexed fixture** | The explicitly identified FastAPI 0.115.0 fixture at pinned commit `40e33e492dbf…` contained 44 files, 716 symbols and 524 edges. Browser/API checks covered repository selection, graph node/filter/zoom/fit, source navigation, lexical context/citations, and session create/remember/clear. This used existing indexed fixture data, not a new hosted ingestion run. |
-| **Current user app verified** | One Cornifer listener on localhost7788, existing user Postgres5433 preserved, health OK, current embedded assets loaded, empty/no-credentials states inspected in AO Browser. The user has since submitted Cornifer itself; it is awaiting embedding credentials, not ready. The temporary fixture preview was stopped during server cleanup. |
-| **Partial interaction verification** | Graph pan logic was inspected and motion logic checked, but a complete browser pan/coordinate assertion and responsive viewport matrix remain unverified. A screenshot was captured during earlier animation work; other screenshot attempts were blocked by panel visibility/timeouts. Copy control was inspected, but an independent OS clipboard read-back was not completed. These are verification gaps, not evidence of provider success. |
-| **Generic lexical indexing corrected and verified** | Offline isolated-Postgres regressions returned actual Markdown/TypeScript/Go evidence through shared companion context and its HTTP handler, with normalized paths, source spans, hashes and commit SHA. Text-only fixture: 5 files, 9 lexical chunks, no vectors/nodes/edges. Mixed fixture: 6 files, 10 chunks, 1 fake-vector Python chunk only inside the test, 3 Python nodes and 1 call edge. Added/changed/deleted generic files, unchanged cache/chunk IDs, oversized UTF-8 lines, and legacy backfill were checked. No hosted calls or user database mutation. |
-| **Credential retry corrected** | Explicit same-URL/ref submission requeues a credential-blocked snapshot after configuration/restart; its SHA is retained. This is regression-tested locally, not a successful live provider ingestion. |
-| **Provider-blocked / not exercised** | No new end-to-end public URL → Voyage embedding → ready corpus run, live hybrid provider query, or hosted chat answer validation has been performed. Adapter tests use controlled test responses. Keys are absent in the current running app; no paid requests were made. |
-| **Known implementation gaps** | Interrupted active-job restart recovery, same-SHA repeat finalization, independent symbol-name catalog search, automatic memory recall/summary, scheduled expiry cleanup, full-client MCP configuration copy, and large/full graph coverage remain limited as described above. |
-| **Not delivered** | Production deployment, authentication/remote-user operation, private GitHub ingestion, structural language parity beyond Python, or exact GitNexus feature parity. Changes remain local unpublished worker commits. |
+- **Built:** sequential UI; honest URL/job/retry/cancel states; answer-first cited
+  results with progressive source/symbol/dependency details; focused shared
+  context graph; discreet saved snapshots/MCP/session controls.
+- **Backend verified offline:** generic docs/source retrieval and incremental
+  changes/cache/backfill; real Python edges; shared HTTP/MCP pack parity including
+  signatures, relation IDs/confidence; snapshot/session isolation; actual phase
+  reporting; no-evidence chat makes no provider request. Tests use isolated
+  Postgres and clearly labelled fake embeddings only within test fixtures.
+- **AO Browser verified on isolated data:** invalid URL; real public Cornifer
+  clone resolving to the credentials-required state; public clone cancellation;
+  nonexistent-repository failure and retry controls; explicit credentials retry
+  creating a new job while retaining the pinned SHA; labelled offline indexed
+  fixture questions; exact method signatures; three indexed call relationships;
+  graph zoom, keyboard pan and reset; node/citation navigation to numbered
+  pinned source; TypeScript lexical evidence without structural metadata;
+  no-match response; follow-up session reuse, explicit note persistence, session
+  clear and MCP configuration copy. Browser and user database verification
+  are separate; fixture rows are never added to the user's database.
+- **Visual verification limits:** AO screenshot capture timed out with the
+  Browser panel hidden. Responsive CSS and reduced-motion rules are inspected,
+  but painted mobile viewport and pointer-drag checks remain unverified. Native
+  AO navigation needs a fresh snapshot after the preview finishes rebinding;
+  stale selectors are not evidence of an application error.
+- **User corpus provider-blocked:** the current Cornifer submission awaits Voyage
+  credentials. No full hosted URL→embedding→ready run, live hybrid provider
+  query, or hosted chat E2E has been executed. Controlled adapter responses and
+  offline fixture evidence are distinct from hosted validation.
+- **Remaining implementation limits:** interrupted-job recovery, same-SHA repeated
+  intake finalization, automatic memory recall/summary, scheduled cleanup,
+  whole-repo graph coverage, authenticated/private repositories, additional
+  structural languages and production deployment are not delivered.
+- **Scope:** local unpublished worker commits; user data preserved; no pushes,
+  PRs, deployments, paid calls, or local inference.
 
-Implementation references: [server startup](../cmd/cornifer-serve/main.go),
-[website controls](../cmd/cornifer-serve/web/app.js),
-[job and session behavior](../internal/companion/service.go),
-[snapshot storage](../internal/companion/postgres.go),
-[provider configuration](../internal/companion/runner.go),
-[chat adapter](../internal/companion/chat.go), and
-[companion MCP tools](../internal/companion/mcp.go).
+Primary implementation references: [website](../cmd/cornifer-serve/web/app.js),
+[shared context](../internal/companion/context.go),
+[jobs/sessions](../internal/companion/service.go),
+[MCP](../internal/companion/mcp.go), [configuration](../internal/companion/runner.go),
+[chat](../internal/companion/chat.go), and
+[offline context/transport parity tests](../internal/companion/text_context_integration_test.go).

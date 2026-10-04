@@ -96,7 +96,10 @@ For complete startup, shutdown, and troubleshooting instructions, see
 verification status. The UI is served
 by Go and requires no npm setup.
 
-`cornifer-serve` is a localhost-only companion. It accepts public GitHub HTTPS
+`cornifer-serve` is a localhost-only companion with a simple URL → indexing →
+question flow. Answers/cited evidence come first; functions, source and focused
+dependencies expand below. Settings holds MCP, snapshots and explicit memory.
+The website and companion MCP share the same enriched context pack. It accepts public GitHub HTTPS
 URLs, clones a detached commit without running repository code or hooks, and
 keeps provider keys in the Go process rather than browser JavaScript.
 

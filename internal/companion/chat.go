@@ -41,6 +41,9 @@ func GenerateAnswer(ctx context.Context, cfg ChatConfig, pack ContextPack) (Answ
 	if !cfg.Configured() {
 		return Answer{Status: "credentials_required", Context: pack}, errors.New("hosted chat configuration is required to generate an answer")
 	}
+	if len(pack.Evidence) == 0 {
+		return Answer{Status: "insufficient_evidence", Text: "No source evidence matched this question in the selected snapshot.", Context: pack}, nil
+	}
 	if cfg.Provider != "openai_compatible" && cfg.Provider != "openai" {
 		return Answer{}, fmt.Errorf("companion: chat provider %q is not supported; configure openai_compatible", cfg.Provider)
 	}
@@ -48,7 +51,7 @@ func GenerateAnswer(ctx context.Context, cfg ChatConfig, pack ContextPack) (Answ
 	if err != nil {
 		return Answer{}, err
 	}
-	prompt := "Answer only from the supplied Cornifer evidence pack. State insufficient evidence when necessary. Cite every factual claim with [eN], and return JSON exactly: {\\\"answer\\\":string,\\\"citations\\\":[string]}.\n\n" + string(evidence)
+	prompt := `Answer only from the supplied Cornifer evidence pack. Start with a readable direct answer, then explain the relevant classes/functions and dependencies when the evidence supports them. Static relationship confidence is not runtime certainty. State insufficient evidence when necessary. Cite factual claims with [eN]. Return a JSON object with keys "answer" (string) and "citations" (array of evidence IDs).` + "\n\n" + string(evidence)
 	body, _ := json.Marshal(map[string]any{"model": cfg.Model, "temperature": 0, "response_format": map[string]string{"type": "json_object"}, "messages": []map[string]string{{"role": "system", "content": "You are a source-grounded repository assistant."}, {"role": "user", "content": prompt}}})
 	client := cfg.HTTPClient
 	if client == nil {

@@ -6,8 +6,10 @@ import (
 	"encoding/hex"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/Hendrixx-RE/cornifer/internal/indexer"
+	"github.com/Hendrixx-RE/cornifer/internal/model"
 	"github.com/Hendrixx-RE/cornifer/internal/retrieve"
 	corestore "github.com/Hendrixx-RE/cornifer/internal/store"
 )
@@ -101,6 +103,7 @@ func (b EngineContextBuilder) Build(ctx context.Context, repo Repository, questi
 		if meta.SymbolID != nil {
 			if sym, ok := session.Symbol(*meta.SymbolID); ok {
 				citation.Symbol = sym.QualifiedName
+				citation.SymbolID = fmt.Sprintf("s:%d", sym.ID)
 			}
 		}
 		for _, source := range hit.Sources {
@@ -115,6 +118,7 @@ func (b EngineContextBuilder) Build(ctx context.Context, repo Repository, questi
 		pack.Omitted.Reason = "context budget or citation metadata limit"
 	}
 	pack.Relationships = evidenceRelationships(session, pack.Evidence, opts.GraphDepth)
+	pack.Symbols = contextSymbols(session, pack.Evidence, pack.Relationships)
 	return pack, nil
 }
 
@@ -125,7 +129,11 @@ func trimEvidence(text string, budget int) (string, bool) {
 	if budget < 32 {
 		return "", true
 	}
-	return text[:budget-1] + "…", true
+	end := budget - len("…")
+	for end > 0 && !utf8.RuneStart(text[end]) {
+		end--
+	}
+	return text[:end] + "…", true
 }
 func hashText(text string) string {
 	sum := sha256.Sum256([]byte(text))
@@ -136,12 +144,7 @@ func evidenceRelationships(session *indexer.Session, evidence []Citation, depth 
 	if depth <= 0 {
 		depth = 1
 	}
-	bySymbol := make(map[string]string, len(evidence))
-	for _, c := range evidence {
-		if c.Symbol != "" {
-			bySymbol[c.Symbol] = c.ID
-		}
-	}
+	bySymbol := evidenceSymbolIDs(session, evidence)
 	var out []Relationship
 	for _, edge := range session.Manifest.Edges {
 		from, fromOK := session.Symbol(edge.SrcSymbolID)
@@ -149,13 +152,73 @@ func evidenceRelationships(session *indexer.Session, evidence []Citation, depth 
 		if !fromOK || !toOK {
 			continue
 		}
-		fromID, toID := bySymbol[from.QualifiedName], bySymbol[to.QualifiedName]
+		fromSymbolID, toSymbolID := fmt.Sprintf("s:%d", from.ID), fmt.Sprintf("s:%d", to.ID)
+		fromID, toID := bySymbol[fromSymbolID], bySymbol[toSymbolID]
 		if fromID == "" && toID == "" {
 			continue
 		}
-		out = append(out, Relationship{FromCitationID: fromID, ToCitationID: toID, FromSymbol: from.QualifiedName, ToSymbol: to.QualifiedName, Kind: string(edge.Kind), Confidence: float64(edge.Confidence), Depth: 1})
+		out = append(out, Relationship{FromSymbolID: fromSymbolID, ToSymbolID: toSymbolID, FromCitationID: fromID, ToCitationID: toID, FromSymbol: from.QualifiedName, ToSymbol: to.QualifiedName, Kind: string(edge.Kind), Confidence: float64(edge.Confidence), Depth: 1})
 		if len(out) == 32 {
 			break
+		}
+	}
+	return out
+}
+
+func contextSymbols(session *indexer.Session, evidence []Citation, relationships []Relationship) []ContextSymbol {
+	wanted, direct := map[string]bool{}, map[string]bool{}
+	for id := range evidenceSymbolIDs(session, evidence) {
+		wanted[id], direct[id] = true, true
+	}
+	for _, r := range relationships {
+		wanted[r.FromSymbolID], wanted[r.ToSymbolID] = true, true
+	}
+	out := []ContextSymbol{}
+	for _, sym := range session.Manifest.Symbols {
+		id := fmt.Sprintf("s:%d", sym.ID)
+		if !wanted[id] {
+			continue
+		}
+		file, ok := session.File(sym.FileID)
+		if !ok {
+			continue
+		}
+		out = append(out, ContextSymbol{ID: id, Name: sym.Name, QualifiedName: sym.QualifiedName, Kind: string(sym.Kind), Path: file.Path, StartLine: sym.StartLine, EndLine: sym.EndLine, Signature: sym.Signature, Evidence: direct[id]})
+	}
+	return out
+}
+
+// A merged/class chunk can contain multiple exact definitions. Include their
+// metadata and immediate edges, not just the chunk's first owning symbol.
+// At most 64 direct definitions plus the bounded relationship endpoints enter
+// a pack. Generic files never gain structural metadata from matching words.
+func evidenceSymbolIDs(session *indexer.Session, evidence []Citation) map[string]string {
+	out := map[string]string{}
+	for _, citation := range evidence {
+		if citation.SymbolID != "" {
+			out[citation.SymbolID] = citation.ID
+		}
+	}
+	for _, sym := range session.Manifest.Symbols {
+		if len(out) >= 64 {
+			break
+		}
+		if sym.Kind != model.SymbolKindClass && sym.Kind != model.SymbolKindFunction && sym.Kind != model.SymbolKindMethod {
+			continue
+		}
+		file, ok := session.File(sym.FileID)
+		if !ok {
+			continue
+		}
+		for _, citation := range evidence {
+			end := citation.EndLine
+			if citation.Truncated {
+				end = citation.StartLine + strings.Count(citation.Snippet, "\n") - 1
+			}
+			if file.Path == citation.Path && sym.StartLine >= citation.StartLine && sym.EndLine <= end {
+				out[fmt.Sprintf("s:%d", sym.ID)] = citation.ID
+				break
+			}
 		}
 	}
 	return out

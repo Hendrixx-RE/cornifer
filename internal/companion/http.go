@@ -39,6 +39,10 @@ func HTTPHandler(service *Service, runtime RuntimeConfig, explorers ...Explorer)
 		repo, err := service.GetRepository(r.Context(), r.PathValue("id"))
 		respond(w, repo, err)
 	})
+	mux.HandleFunc("GET /api/repos/{id}/job", func(w http.ResponseWriter, r *http.Request) {
+		job, err := service.latestJob(r.Context(), r.PathValue("id"))
+		respond(w, job, err)
+	})
 	mux.HandleFunc("GET /api/repos/{id}/graph", func(w http.ResponseWriter, r *http.Request) {
 		repo, err := service.GetRepository(r.Context(), r.PathValue("id"))
 		if err != nil {
