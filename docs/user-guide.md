@@ -547,7 +547,7 @@ project without deleting its volume. For the named existing container,
 Do not use `down -v` for data you want to keep.
 
 UI assets are embedded: stop and rebuild/restart Go after edits, then reload.
-The logo update uses asset version `brand-1`. Refreshing an old binary
+The logo update uses asset version `brand-2`. Refreshing an old binary
 cannot install new assets.
 
 | Problem | Action |
